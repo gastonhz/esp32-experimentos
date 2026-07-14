@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../../esp32"
+		},
+		{
+			"name": "leds-esp32",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}
