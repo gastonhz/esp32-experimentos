@@ -1,82 +1,45 @@
 /*********
-  Piano tactil - cada pad toca una nota en el buzzer pasivo.
-  Toca un cable (o una fruta con un cocodrilo) conectado a cada pad.
-  Buzzer pasivo: una pata a GPIO17, la otra a GND.
-  LED opcional: GPIO16 -> resistencia 220 -> LED -> GND (parpadea al tocar).
+  LCD 1602 por I2C - frase que desfila (efecto cartel de cancha).
+  Direccion 0x27 (confirmada con el scanner).
+  Conexion: GND->GND, VCC->5V, SDA->GPIO21, SCL->GPIO22.
 *********/
 
 #include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
-// --- Salidas ---
-const int BUZZ_PIN   = 17;   // buzzer pasivo
-const int LEDC_CANAL = 0;    // canal LEDC que genera el tono
-const int LED_PIN    = 16;   // LED que se prende con cualquier nota
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// --- Teclas ---
-// Cada tecla = un pad tactil + su nota (Hz). Usamos solo pads "limpios"
-// (evitamos strapping: GPIO0/2/5/12/15). Podes agregar o sacar teclas
-// libremente: el codigo se adapta al tamano del array.
-struct Tecla {
-  int  pad;         // pad tactil (T0..T9)
-  int  frecuencia;  // Hz de la nota
-  const char* nombre;
-};
+// Mensaje que desfila en la fila de arriba.
+String mensaje = "INGLATERRA LA CONCHA DE TU MADRE";
 
-Tecla teclas[] = {
-  { T0, 262, "Do" },   // GPIO4
-  { T4, 294, "Re" },   // GPIO13
-  { T6, 330, "Mi" },   // GPIO14
-  { T7, 349, "Fa" },   // GPIO27
-  { T8, 392, "Sol" },  // GPIO33
-  { T9, 440, "La" },   // GPIO32
-};
-const int N_TECLAS = sizeof(teclas) / sizeof(teclas[0]);
+// Se le agregan 16 espacios a cada lado para que entre desde la derecha
+// y salga por la izquierda de forma limpia.
+String scroller;
+int pos = 0;
 
-// Umbral por tecla, calculado solo al arrancar.
-int umbral[N_TECLAS];
-
-// Lee un pad 20 veces sin tocar y devuelve la mitad del reposo.
-int calibrar(int pad) {
-  long base = 0;
-  for (int i = 0; i < 20; i++) {
-    base += touchRead(pad);
-    delay(20);
-  }
-  return (base / 20) / 2;
-}
+// Velocidad del scroll: mas chico = mas rapido.
+const int VELOCIDAD_MS = 400;
 
 void setup() {
-  Serial.begin(115200);
-  delay(500);
-  pinMode(LED_PIN, OUTPUT);
-  ledcSetup(LEDC_CANAL, 440, 10);
-  ledcAttachPin(BUZZ_PIN, LEDC_CANAL);
-  ledcWriteTone(LEDC_CANAL, 0);   // silencio
+  Wire.begin(21, 22);   // SDA, SCL
+  lcd.init();
+  lcd.backlight();
 
-  // NO toques ningun pad durante la calibracion (~1 segundo por tecla).
-  Serial.println("Calibrando... no toques nada.");
-  for (int i = 0; i < N_TECLAS; i++) {
-    umbral[i] = calibrar(teclas[i].pad);
-  }
-  Serial.println("Listo. Toca las teclas!");
+  scroller = "                " + mensaje + "                ";
+
+  // Fila de abajo, texto fijo (max 16 caracteres).
+  lcd.setCursor(0, 1);
+  lcd.print(" DALE MESSI");
 }
 
 void loop() {
-  int notaSonando = 0;   // 0 = silencio
-  const char* nombre = nullptr;
+  // Mostramos una ventana de 16 caracteres que avanza de a uno.
+  lcd.setCursor(0, 0);
+  lcd.print(scroller.substring(pos, pos + 16));
 
-  // Recorremos las teclas; la primera que este tocada manda.
-  for (int i = 0; i < N_TECLAS; i++) {
-    if (touchRead(teclas[i].pad) < umbral[i]) {
-      notaSonando = teclas[i].frecuencia;
-      nombre = teclas[i].nombre;
-      break;
-    }
-  }
+  pos++;
+  if (pos > (int)scroller.length() - 16) pos = 0;   // reinicia el ciclo
 
-  ledcWriteTone(LEDC_CANAL, notaSonando);      // 0 = silencio
-  digitalWrite(LED_PIN, notaSonando ? HIGH : LOW);
-
-  if (nombre) Serial.println(nombre);
-  delay(20);
+  delay(VELOCIDAD_MS);
 }
