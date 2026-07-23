@@ -4,5 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 
-# Notas en Markdown: se gestionan en la wiki, no en este repo.
+# Documentacion en Markdown: vive en la wiki (symlinks en docs/), no en este repo.
 scripts-y-pruebas/*.md
+scripts-y-pruebas/docs/
