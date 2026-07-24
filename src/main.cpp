@@ -10,8 +10,8 @@
 
   Hardware (ver scripts-y-pruebas/setup-hardware-maquina-juegos-led.md):
     Datos:    GPIO16 -> SN74AHCT125N -> 470ohm -> DIN tira (100 LEDs WS2812B)
-    Touch P1: GPIO14 (T6) -- almohadilla capacitiva (touchRead: tocar = valor bajo)
-    Touch P2: GPIO27 (T7) -- idem (ambos evitan strapping pins y el GPIO16 de datos)
+    Boton P1: GPIO14 a GND (arcade/microswitch; INPUT_PULLUP, apretado = LOW)
+    Boton P2: GPIO27 a GND (idem)
     Buzzer:   GPIO25 (buzzer pasivo, PWM por LEDC) a GND
     LCD 1602: I2C 0x27, SDA=GPIO21, SCL=GPIO22 (marcador + mensajes de estado)
     Reset:    GPIO18 a GND (pulsador viejo reusado; INPUT_PULLUP, apretado = LOW)
@@ -28,9 +28,9 @@
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 
-// Entradas tactiles (canales touch del ESP32 clasico). Tocar baja el valor.
-#define BTN_P1 14   // T6
-#define BTN_P2 27   // T7
+// Botones arcade (microswitch) a GND, con pull-up interno. Apretado = LOW.
+#define BTN_P1 14
+#define BTN_P2 27
 
 #define BUZZER_PIN 25   // buzzer pasivo por LEDC
 #define BUZZER_CH  0    // canal LEDC (core arduino-esp32 2.0.x)
@@ -54,12 +54,6 @@ const uint16_t VEL_ACELERA    = 4;    // cuanto baja el intervalo por cada golpe
 const uint8_t  PUNTOS_GANAR   = 5;
 const uint16_t DEBOUNCE_MS    = 25;
 const uint8_t  ESTELA         = 2;    // largo de la cola de la pelota
-
-// Touch: se considera "tocado" cuando touchRead() cae por debajo del umbral.
-// Calibrar con CALIBRAR_TOUCH = true, mirar los valores por serial (tocado vs
-// suelto) y elegir un umbral entre medio.
-const uint16_t TOUCH_UMBRAL   = 40;
-const bool     CALIBRAR_TOUCH = false;
 
 // ---------- Colores ----------
 #define COL_PELOTA  CRGB::White
@@ -91,7 +85,7 @@ void actualizarBotones() {
   uint32_t ahora = millis();
   for (uint8_t i = 0; i < 2; i++) {
     btnFlanco[i] = false;
-    bool raw = (touchRead(PIN_BTN[i]) < TOUCH_UMBRAL);   // tocado = valor bajo
+    bool raw = (digitalRead(PIN_BTN[i]) == LOW);   // apretado = LOW
     if (raw != btnPrev[i]) {
       btnPrev[i]   = raw;
       btnCambio[i] = ahora;
@@ -349,18 +343,11 @@ void chequearReset() {
   resetPrev = r;
 }
 
-// Modo calibracion: imprime touchRead() de ambos pads para elegir TOUCH_UMBRAL.
-void loopCalibrarTouch() {
-  Serial.printf("P1 GPIO%u(T6)=%4d   P2 GPIO%u(T7)=%4d   (umbral actual %u)\n",
-                BTN_P1, touchRead(BTN_P1), BTN_P2, touchRead(BTN_P2), TOUCH_UMBRAL);
-  delay(200);
-}
-
 // ---------- Arduino ----------
 void setup() {
-  Serial.begin(115200);
-
-  // Los pads tactiles no necesitan pinMode; el pulsador de reset si.
+  // Botones (jugadores + reset) a GND, con pull-up interno.
+  pinMode(BTN_P1, INPUT_PULLUP);
+  pinMode(BTN_P2, INPUT_PULLUP);
   pinMode(RESET_PIN, INPUT_PULLUP);
   ledcSetup(BUZZER_CH, 2000, 8);        // canal, freq base, resolucion (bits)
   ledcAttachPin(BUZZER_PIN, BUZZER_CH); // enganchar el pin al canal
@@ -383,8 +370,6 @@ void setup() {
 }
 
 void loop() {
-  if (CALIBRAR_TOUCH) { loopCalibrarTouch(); return; }
-
   chequearReset();
   actualizarBotones();
   switch (estado) {
