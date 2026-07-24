@@ -1,20 +1,25 @@
 /*********
-  PONG 1D sobre tira WS2812B — primer juego de la maquina de juegos LED.
+  MAQUINA DE JUEGOS LED — consola 1D sobre tira WS2812B (ESP32 + FastLED).
 
-  La tira es el mundo del juego: la pelota (LED blanco con estela) rebota
-  entre los dos extremos. Cada jugador tiene una ZONA de golpe cerca de su
-  punta; cuando la pelota entra en ella, la zona se ilumina fuerte ("dale
-  ahora"). El jugador golpea apretando su boton mientras la pelota esta en
-  su zona. Si la pelota se escapa por su punta, el rival suma punto.
-  Cada golpe acelera la pelota. Primero a PUNTOS_GANAR gana.
+  Al encender aparece un SELECTOR: con el boton Verde (P1) se pasa de juego y
+  con el Azul (P2) se arranca el resaltado. El pulsador de reset vuelve al
+  selector desde cualquier juego (y al terminar una partida vuelve solo).
+
+  Juegos:
+    - Pong 1D: pelota que rebota; cada jugador golpea con su boton cuando la
+      pelota entra en su zona; cada golpe acelera. El potenciometro fija la
+      velocidad de saque.
+    - Tug of War: cinchada de botones; un frente Verde|Azul que se empuja a
+      martillazos hacia el lado del rival; el que llega al extremo contrario gana.
 
   Hardware (ver scripts-y-pruebas/setup-hardware-maquina-juegos-led.md):
     Datos:    GPIO16 -> SN74AHCT125N -> 470ohm -> DIN tira (100 LEDs WS2812B)
-    Boton P1: GPIO14 a GND (arcade/microswitch; INPUT_PULLUP, apretado = LOW)
-    Boton P2: GPIO27 a GND (idem)
+    Boton P1 (Verde): GPIO14 a GND (arcade/microswitch; INPUT_PULLUP, apretado = LOW)
+    Boton P2 (Azul):  GPIO27 a GND (idem)
     Buzzer:   GPIO25 (buzzer pasivo, PWM por LEDC) a GND
     LCD 1602: I2C 0x27, SDA=GPIO21, SCL=GPIO22 (marcador + mensajes de estado)
-    Reset:    GPIO18 a GND (pulsador viejo reusado; INPUT_PULLUP, apretado = LOW)
+    Reset:    GPIO18 a GND (pulsador; INPUT_PULLUP, apretado = LOW) -> vuelve al menu
+    Pote:     GPIO34 (ADC1, input-only) -- B10k: extremos a 3.3V/GND, cursor al pin
     Tira alimentada por fuente externa 5V, masa comun, cap de 1000uF al inicio.
 *********/
 
@@ -37,6 +42,8 @@
 
 #define RESET_PIN  18   // pulsador viejo reusado como reset del partido
 
+#define POT_PIN    34   // potenciometro B10k -> velocidad de saque (ADC1)
+
 // LCD 1602 por I2C (marcador + mensajes de estado).
 #define LCD_ADDR 0x27
 #define LCD_SDA  21
@@ -48,12 +55,14 @@ LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 // ---------- Parametros del juego (tocar aca para balancear) ----------
 const uint8_t  BRILLO         = 128;  // techo de seguridad de corriente
 const uint8_t  ZONA           = 12;   // largo de la zona de golpe de cada jugador
-const uint16_t VEL_INICIAL    = 60;   // ms por LED al sacar (mas grande = mas lento)
-const uint16_t VEL_MINIMA     = 16;   // techo de velocidad (ms por LED)
+const uint16_t VEL_LENTA      = 90;   // saque mas lento, pote al minimo (ms por LED)
+const uint16_t VEL_RAPIDA     = 24;   // saque mas rapido, pote al maximo (ms por LED)
+const uint16_t VEL_MINIMA     = 16;   // piso de aceleracion (ms por LED)
 const uint16_t VEL_ACELERA    = 4;    // cuanto baja el intervalo por cada golpe
 const uint8_t  PUNTOS_GANAR   = 5;
 const uint16_t DEBOUNCE_MS    = 25;
 const uint8_t  ESTELA         = 2;    // largo de la cola de la pelota
+const uint8_t  TUG_EMPUJE     = 2;    // LEDs que avanza el frente por pulsacion (Tug of War)
 
 // ---------- Colores ----------
 #define COL_PELOTA  CRGB::White
@@ -73,6 +82,27 @@ uint32_t ultimoPaso;    // millis() del ultimo movimiento
 uint8_t  puntosP1, puntosP2;
 uint8_t  saca;          // quien saca: 1 o 2 (saca el que perdio el punto)
 uint8_t  ganador;       // 1 o 2, valido en estado FIN
+uint16_t velSaque = VEL_LENTA;  // velocidad de saque actual, la fija el potenciometro
+
+// ---------- Consola: selector de juegos ----------
+enum Pantalla { MENU, JUEGO };
+Pantalla pantalla = MENU;               // arranca en el selector
+
+enum Juego { JUEGO_PONG, JUEGO_TUG, NUM_JUEGOS };
+uint8_t juegoSel    = 0;                // indice resaltado en el menu
+uint8_t juegoActivo = JUEGO_PONG;       // juego que se esta jugando
+const char* NOMBRE_JUEGO[NUM_JUEGOS] = { "Pong", "Tug of War" };
+
+// Definidas mas abajo; se usan antes en el archivo.
+void volverAlMenu();
+void iniciarJuego(uint8_t j);
+void nuevoTug();
+
+// ---------- Estado de Tug of War ----------
+enum EstadoTug { TUG_JUGANDO, TUG_FIN };
+EstadoTug estadoTug;
+int16_t   tugFrente;    // posicion del limite Verde|Azul (0..NUM_LEDS-1)
+uint8_t   tugGanador;   // 1 = Verde, 2 = Azul
 
 // ---------- Botones: debounce + flanco de bajada ----------
 const uint8_t PIN_BTN[2] = { BTN_P1, BTN_P2 };
@@ -95,6 +125,15 @@ void actualizarBotones() {
       if (btnEstable[i]) btnFlanco[i] = true;       // flanco: recien presionado
     }
   }
+}
+
+// ---------- Potenciometro: velocidad de saque ----------
+// Promedia unas lecturas para suavizar el jitter del ADC y mapea a velSaque.
+// El pote solo fija la velocidad del SAQUE; la aceleracion por golpes sigue igual.
+void leerPote() {
+  uint32_t s = 0;
+  for (uint8_t i = 0; i < 4; i++) s += analogRead(POT_PIN);
+  velSaque = map(s / 4, 0, 4095, VEL_LENTA, VEL_RAPIDA);
 }
 
 // ---------- Buzzer: efectos no bloqueantes (LEDC) ----------
@@ -152,7 +191,7 @@ void actualizarBuzzer() {
 
 // Efectos concretos del juego.
 void sonarGolpe() {                  // agudo, sube con la velocidad de la pelota
-  uint16_t freq = 1000 + (VEL_INICIAL - pelotaVel) * 10;
+  uint16_t freq = 1000 + (VEL_LENTA - pelotaVel) * 10;
   beep(freq, 30);
 }
 void sonarSaque()    { beep(900, 45); }
@@ -178,21 +217,52 @@ void lcdLinea(uint8_t fila, const String& txt) {
   lcd.print(t);
 }
 
-// Arma las dos filas segun el estado del juego. Se llama cada loop, pero solo
-// toca el I2C cuando el contenido realmente cambia.
-void actualizarLCD() {
-  // Fila 0: marcador siempre. Verde = P1 (inicio), Azul = P2 (final).
-  lcdLinea(0, "Verde " + String(puntosP1) + " - " + String(puntosP2) + " Azul");
+// Fuerza que la proxima actualizacion repinte ambas filas (al cambiar de pantalla).
+void lcdForzarRefresh() { lcdCache[0] = "\x01"; lcdCache[1] = "\x01"; }
 
-  // Fila 1: mensaje segun estado.
+// --- Pong: marcador + mensaje segun estado ---
+void lcdPong() {
+  lcdLinea(0, "Verde " + String(puntosP1) + " - " + String(puntosP2) + " Azul");
   String m;
   switch (estado) {
-    case SACANDO: m = (saca == 1) ? "Saca Verde!" : "Saca Azul!";  break;
-    case JUGANDO: m = "- peloteando -"; break;
+    case SACANDO: {                       // muestra el nivel de velocidad del pote
+      uint8_t nivel = map(velSaque, VEL_LENTA, VEL_RAPIDA, 1, 9);
+      m = String(saca == 1 ? "Saca Verde v" : "Saca Azul v") + nivel;
+      break;
+    }
+    case JUGANDO: m = "- jugando -"; break;
     case PUNTO:   m = (saca == 1) ? "Punto Azul!" : "Punto Verde!"; break;  // sumo el rival del que saca
     case FIN:     m = (ganador == 1) ? "** GANA VERDE **" : "** GANA AZUL **"; break;
   }
   lcdLinea(1, m);
+}
+
+// --- Tug of War: etiquetas de lado + barra de posicion del frente ---
+void lcdTug() {
+  if (estadoTug == TUG_FIN) {
+    lcdLinea(0, "Tug of War");
+    lcdLinea(1, (tugGanador == 1) ? "** GANA VERDE **" : "** GANA AZUL **");
+    return;
+  }
+  lcdLinea(0, "Verde       Azul");        // Verde a la izquierda, Azul a la derecha
+  uint8_t p = map(tugFrente, 0, NUM_LEDS - 1, 0, 15);
+  String bar;
+  for (uint8_t i = 0; i < 16; i++) bar += (i == p) ? '|' : '-';
+  lcdLinea(1, bar);
+}
+
+// --- Menu: juego resaltado + ayuda de botones ---
+void lcdMenu() {
+  lcdLinea(0, "> " + String(NOMBRE_JUEGO[juegoSel]));
+  lcdLinea(1, "V=sig   A=jugar");
+}
+
+// Dispatcher: elige que mostrar segun la pantalla/juego actual. Se llama cada
+// loop, pero lcdLinea solo toca el I2C cuando el texto realmente cambia.
+void actualizarLCD() {
+  if (pantalla == MENU) { lcdMenu(); return; }
+  if (juegoActivo == JUEGO_PONG) lcdPong();
+  else                           lcdTug();
 }
 
 // ---------- Utilidades de dibujo ----------
@@ -224,7 +294,7 @@ void irA(Estado e) {
 }
 
 void prepararSaque() {
-  pelotaVel = VEL_INICIAL;
+  pelotaVel = velSaque;
   if (saca == 1) {                 // P1 saca desde el inicio, hacia P2
     pelotaPos = 1;
     pelotaDir = +1;
@@ -320,7 +390,7 @@ void loopPunto() {
 }
 
 void loopFin() {
-  // Animacion de victoria en el color del ganador, ~3.5 s, y nuevo partido.
+  // Animacion de victoria en el color del ganador, ~3.5 s, y vuelta al menu.
   CRGB c = (ganador == 1) ? COL_P1 : COL_P2;
   uint16_t t = (millis() - estadoDesde);
   FastLED.clear();
@@ -329,16 +399,85 @@ void loopFin() {
   }
   FastLED.show();
 
-  if (t > 3500) nuevoPartido();
+  if (t > 3500) volverAlMenu();
 }
 
-// Reset del partido con el pulsador viejo (flanco de bajada -> arranca de cero).
+// Despacha el frame de Pong segun su estado interno.
+void loopPong() {
+  switch (estado) {
+    case SACANDO: loopSacando(); break;
+    case JUGANDO: loopJugando(); break;
+    case PUNTO:   loopPunto();   break;
+    case FIN:     loopFin();     break;
+  }
+}
+
+// ---------- Tug of War: cinchada de botones ----------
+void nuevoTug() {
+  tugFrente = NUM_LEDS / 2;   // el frente arranca en el centro
+  estadoTug = TUG_JUGANDO;
+}
+
+void loopTug() {
+  if (estadoTug == TUG_JUGANDO) {
+    // Cada pulsacion nueva (flanco) empuja el frente hacia el lado del rival.
+    if (btnFlanco[0]) { tugFrente += TUG_EMPUJE; beep(1400, 18); }   // Verde empuja al final
+    if (btnFlanco[1]) { tugFrente -= TUG_EMPUJE; beep(1050, 18); }   // Azul empuja al inicio
+
+    if (tugFrente >= NUM_LEDS - 1) {        // Verde conquisto la tira
+      tugGanador = 1; estadoTug = TUG_FIN; estadoDesde = millis(); sonarVictoria();
+    } else if (tugFrente <= 0) {            // Azul conquisto la tira
+      tugGanador = 2; estadoTug = TUG_FIN; estadoDesde = millis(); sonarVictoria();
+    }
+
+    // Render: Verde [0, frente), Azul [frente, fin).
+    for (int16_t i = 0; i < NUM_LEDS; i++) leds[i] = (i < tugFrente) ? COL_P1 : COL_P2;
+    FastLED.show();
+  } else {  // TUG_FIN: festejo del ganador, ~3 s, y al menu.
+    CRGB c = (tugGanador == 1) ? COL_P1 : COL_P2;
+    uint16_t t = millis() - estadoDesde;
+    fill_solid(leds, NUM_LEDS, ((t / 150) % 2 == 0) ? c : CRGB::Black);
+    FastLED.show();
+    if (t > 3000) volverAlMenu();
+  }
+}
+
+// ---------- Selector de juegos ----------
+void iniciarJuego(uint8_t j) {
+  juegoActivo = j;
+  pantalla = JUEGO;
+  lcdForzarRefresh();
+  FastLED.clear(true);
+  if (j == JUEGO_PONG) nuevoPartido();
+  else                 nuevoTug();
+}
+
+void volverAlMenu() {
+  pantalla = MENU;
+  lcdForzarRefresh();
+  FastLED.clear(true);
+}
+
+void loopMenu() {
+  if (btnFlanco[0]) { juegoSel = (juegoSel + 1) % NUM_JUEGOS; beep(1200, 25); }  // siguiente
+  if (btnFlanco[1]) { iniciarJuego(juegoSel); return; }                          // jugar
+
+  // Atractor: arcoiris tenue en movimiento mientras se elige.
+  static uint8_t  hue = 0;
+  static uint32_t ultimo = 0;
+  if (millis() - ultimo > 30) { ultimo = millis(); hue++; }
+  fill_rainbow(leds, NUM_LEDS, hue, 3);
+  nscale8(leds, NUM_LEDS, 40);   // bajar el brillo del atractor
+  FastLED.show();
+}
+
+// Reset con el pulsador viejo (flanco de bajada): desde un juego vuelve al menu.
 bool resetPrev = false;
 void chequearReset() {
   bool r = (digitalRead(RESET_PIN) == LOW);   // apretado = LOW
   if (r && !resetPrev) {
     beep(600, 80);
-    nuevoPartido();
+    if (pantalla == JUEGO) volverAlMenu();
   }
   resetPrev = r;
 }
@@ -356,8 +495,8 @@ void setup() {
   Wire.begin(LCD_SDA, LCD_SCL);
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("   PONG 1D LED  ");
-  lcd.setCursor(0, 1); lcd.print("  ESP32 + tira  ");
+  lcd.setCursor(0, 0); lcd.print(" MAQUINA JUEGOS ");
+  lcd.setCursor(0, 1); lcd.print("  LED  -  ESP32 ");
   delay(1200);
   lcd.clear();
 
@@ -366,18 +505,18 @@ void setup() {
   FastLED.setMaxPowerInVoltsAndMilliamps(5, 4500);  // red de seguridad: 4.5 A
   FastLED.clear(true);
 
-  nuevoPartido();
+  pantalla = MENU;   // arranca en el selector de juegos
 }
 
 void loop() {
+  leerPote();
   chequearReset();
   actualizarBotones();
-  switch (estado) {
-    case SACANDO: loopSacando(); break;
-    case JUGANDO: loopJugando(); break;
-    case PUNTO:   loopPunto();   break;
-    case FIN:     loopFin();     break;
-  }
+
+  if (pantalla == MENU)               loopMenu();
+  else if (juegoActivo == JUEGO_PONG) loopPong();
+  else                                loopTug();
+
   actualizarBuzzer();
   actualizarLCD();
 }
