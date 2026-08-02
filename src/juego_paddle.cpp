@@ -34,7 +34,7 @@ const uint16_t PAD_FIN_MS     = 3200;
 // martillar el boton, porque con la ventana ancha de los primeros golpes una
 // pulsacion cada 100 ms acierta siempre. Con el castigo, cada golpe al aire deja
 // la paleta muerta un cuarto de segundo y martillar pasa a ser la peor idea.
-const uint16_t PAD_FALLO_MS   = 260;
+uint16_t PAD_FALLO_MS = 260;
 
 static const CRGB COL_PALETA = CRGB(  0, 255,  60);
 static const CRGB COL_PARED  = CRGB(  0,  60, 255);

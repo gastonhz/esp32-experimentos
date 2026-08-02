@@ -285,9 +285,9 @@ const RecordDef RECORDS[] = {
   { "hsTwang",  "Twang",         "Nivel ", "",         false },
   { "hsPaddle", "Paddle",        "",       " pts",     false },
   { "hsStack",  "Stacker",       "Piso ",  "",         false },
-  { "hsEsq",    "Esquiva",       "",       " muros",   false },
-  { "hsLander", "Lander",        "",       " aterriz", false },
-  { "hsDuelo",  "Duelo",         "",       " ms",      true  },   // gana el tiempo mas CHICO
+  { "hsEsq",    "Salta Muros",       "",       " muros",   false },
+  { "hsLander", "Alunizaje",        "",       " aluniza.", false },
+  { "hsDuelo",  "Reaccion",      "",       " ms",      true  },   // gana el tiempo mas CHICO
 };
 static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
               "RECORDS[] y el enum Record quedaron desincronizados");

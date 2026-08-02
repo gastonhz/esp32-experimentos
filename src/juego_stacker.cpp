@@ -167,7 +167,7 @@ void lcdStacker() {
     return;
   }
   if (estadoStk == STK_FIN) {
-    lcdLinea(0, "** SE CAYO **");
+    lcdLinea(0, "** PERDISTE **");
     lcdLinea(1, esRecord ? "*NUEVO RECORD!*" : ("Llegaste al " + String(piso)));
     return;
   }

@@ -13,3 +13,4 @@ String webPaddle();
 extern uint16_t PAD_VEL_JUGADOR;  // LEDs por segundo de la paleta
 extern uint16_t PAD_LARGO_INI;    // largo de la paleta al empezar (LEDs)
 extern uint16_t PAD_ACHICA_CADA;  // cada cuantos golpes se acorta la paleta
+extern uint16_t PAD_FALLO_MS;     // cuanto queda muerta la paleta tras un golpe al aire

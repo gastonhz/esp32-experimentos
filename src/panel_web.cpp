@@ -47,6 +47,7 @@ static const Param PARAMS[] = {
   { "Paddle",        "padVelJugador",     "Paleta (LEDs/s)",       &PAD_VEL_JUGADOR     },
   { "Paddle",        "padLargoIni",       "Largo inicial (LEDs)",  &PAD_LARGO_INI       },
   { "Paddle",        "padAchicaCada",     "Achica cada N golpes",  &PAD_ACHICA_CADA     },
+  { "Paddle",        "padFalloMs",        "Castigo al aire (ms)",  &PAD_FALLO_MS        },
   { "Stacker",       "stkAnchoIni",       "Ancho inicial (LEDs)",  &STK_ANCHO_INI       },
   { "Stacker",       "stkPisos",          "Pisos para ganar",      &STK_PISOS           },
   { "Esquiva",       "esqVelJugador",     "Caminar (LEDs/s)",      &ESQ_VEL_JUGADOR     },
@@ -61,6 +62,7 @@ static const Param PARAMS[] = {
   { "Lander",        "lndGravedad",       "Gravedad (LEDs/s2)",    &LND_GRAVEDAD        },
   { "Lander",        "lndEmpuje",         "Empuje (LEDs/s2)",      &LND_EMPUJE          },
   { "Lander",        "lndVelSegura",      "Vel. de posado (LEDs/s)", &LND_VEL_SEGURA    },
+  { "Lander",        "lndCombustible",    "Combustible (ms)",      &LND_COMBUSTIBLE     },
   { "Duelo",         "dueEsperaMin",      "Espera minima (ms)",    &DUE_ESPERA_MIN      },
   { "Duelo",         "dueEsperaMax",      "Espera maxima (ms)",    &DUE_ESPERA_MAX      },
 };

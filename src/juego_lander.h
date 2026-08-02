@@ -14,3 +14,4 @@ String webLander();
 extern uint16_t LND_GRAVEDAD;     // LEDs/s^2 hacia la base
 extern uint16_t LND_EMPUJE;       // LEDs/s^2 del motor a fondo
 extern uint16_t LND_VEL_SEGURA;   // maxima velocidad de contacto que se banca (LEDs/s)
+extern uint16_t LND_COMBUSTIBLE;  // ms de motor a fondo por intento

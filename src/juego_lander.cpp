@@ -23,7 +23,7 @@ uint16_t LND_GRAVEDAD   = 26;   // LEDs/s^2 hacia la base
 uint16_t LND_EMPUJE     = 60;   // LEDs/s^2 del motor a fondo
 uint16_t LND_VEL_SEGURA = 14;   // maxima velocidad de contacto que se banca (LEDs/s)
 
-const uint16_t LND_COMBUSTIBLE  = 5000; // ms de motor a fondo por intento
+uint16_t LND_COMBUSTIBLE = 5000;        // ms de motor a fondo por intento
 const uint8_t  LND_INTENTOS     = 3;
 const uint8_t  LND_PLAT_INI     = 9;    // largo de la plataforma en el primer aterrizaje
 const uint8_t  LND_PLAT_MIN     = 3;
@@ -246,6 +246,7 @@ void lcdLander() {
 }
 
 String webLander() {
+  uint16_t tope = LND_COMBUSTIBLE ? LND_COMBUSTIBLE : 1;   // el panel web puede dejarlo en 0
   return "Aterrizajes: " + String(aterrizajes) + ", naves " + String(intentos) +
-         ", combustible " + String((combustible * 100) / LND_COMBUSTIBLE) + "%";
+         ", combustible " + String((combustible * 100) / tope) + "%";
 }
