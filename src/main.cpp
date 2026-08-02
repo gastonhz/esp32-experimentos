@@ -136,6 +136,12 @@ static void chequearReset() {
 
 // ---------- Arduino ----------
 void setup() {
+  // Lo primero, para que el monitor serie sirva de algo aunque la consola se
+  // este reiniciando sola: el ESP32 ya imprime la causa del reset por su cuenta,
+  // pero esta linea la deja en castellano y marca donde arranca cada boot.
+  Serial.begin(115200);
+  Serial.println("\n[gasticonsola] ultimo reinicio: " + textoCausaReset());
+
   // Botones (jugadores + reset) a GND, con pull-up interno.
   pinMode(BTN_P1, INPUT_PULLUP);
   pinMode(BTN_P2, INPUT_PULLUP);

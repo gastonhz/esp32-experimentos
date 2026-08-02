@@ -85,6 +85,7 @@ static String paginaHtml() {
     h += "Jugando: <b>" + String(JUEGOS[juegoActivo].nombre) + "</b><br>";
     h += JUEGOS[juegoActivo].web();
   }
+  h += "<br><small>Ultimo reinicio: " + textoCausaReset() + "</small>";
   h += "</p>";
 
   // --- Records guardados ---

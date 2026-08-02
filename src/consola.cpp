@@ -6,6 +6,7 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Preferences.h>
+#include <esp_system.h>
 
 // ---------- Tira ----------
 CRGB     leds[NUM_LEDS];
@@ -221,13 +222,56 @@ String barraLCD(uint16_t valor, uint16_t maximo, uint8_t ancho) {
   return b;
 }
 
+// ---------- Diagnostico: por que se reinicio la placa ----------
+String textoCausaReset() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "Encendido normal";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (5V!)";   // se cayo la alimentacion
+    case ESP_RST_PANIC:    return "Crash (panic)";    // excepcion en el firmware
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return "Watchdog";
+    case ESP_RST_SW:       return "Reset software";
+    case ESP_RST_EXT:      return "Reset externo";
+    case ESP_RST_DEEPSLEEP:return "Deep sleep";
+    default:               return "Desconocida";
+  }
+}
+
+// Escribe una linea de 16 columnas sin pasar por la cache de lcdLinea: se usa
+// durante el splash, cuando todavia no hay pantalla activa que cachear.
+static void lcdCrudo(uint8_t fila, const String& txt) {
+  String t = txt;
+  if (t.length() > 16) t = t.substring(0, 16);
+  while (t.length() < 16) t += ' ';
+  lcd.setCursor(0, fila);
+  lcd.print(t);
+}
+
 void iniciarLCD() {
   Wire.begin(LCD_SDA, LCD_SCL);
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("  gasticonsola  ");
-  lcd.setCursor(0, 1); lcd.print("  LED  -  ESP32 ");
-  delay(3600);
+  lcdCrudo(0, "  gasticonsola");
+  lcdCrudo(1, "  LED  -  ESP32");
+
+  // El splash dura lo mismo que antes, pero ahora es una espera activa: si en
+  // algun momento de esos 3,6 s se aprieta el pulsador de reset, despues se
+  // muestra la causa del ultimo reinicio. Asi el dato esta siempre disponible
+  // sin enchufar la compu, pero no le aparece en la cara a nadie que solo
+  // quiera jugar.
+  bool pedido = false;
+  uint32_t hasta = millis() + 3600;
+  while ((int32_t)(millis() - hasta) < 0) {
+    if (digitalRead(RESET_PIN) == LOW) pedido = true;   // apretado = LOW
+    delay(10);
+  }
+
+  if (pedido) {
+    lcdCrudo(0, "Ultimo reinicio:");
+    lcdCrudo(1, textoCausaReset());
+    delay(4000);
+  }
   lcd.clear();
 }
 

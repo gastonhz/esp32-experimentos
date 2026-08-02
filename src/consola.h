@@ -107,7 +107,17 @@ void sonarRecord();             // reemplaza al sonido de fin cuando hubo record
 // la cache: el I2C es lento y repintar cada frame haria stutter en el juego.
 void lcdLinea(uint8_t fila, const String& txt);
 void lcdForzarRefresh();        // al cambiar de pantalla: repinta las dos filas
+// Splash de arranque. Si se mantiene apretado el pulsador de reset durante el
+// splash, en vez de pasar de largo muestra por que se reinicio la placa la vez
+// anterior (ver textoCausaReset).
 void iniciarLCD();
+
+// ---------- Diagnostico ----------
+// Causa del ultimo reinicio, en texto corto para las 16 columnas del LCD. En
+// una consola que vive en protoboard el dato que importa es si fue "Encendido"
+// (arranque normal) o "BROWNOUT": lo segundo es la alimentacion cayendose, y
+// manda a revisar cables y masas en vez de codigo.
+String textoCausaReset();
 // Barra de progreso de `ancho` columnas: "#####-----". Para combustible, tiempo
 // restante y cualquier magnitud que se lea mejor de un vistazo que como numero.
 String barraLCD(uint16_t valor, uint16_t maximo, uint8_t ancho);
