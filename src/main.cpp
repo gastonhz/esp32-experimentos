@@ -22,6 +22,7 @@
     juego_esquiva.*   muros que bajan y hay que meterse en los huecos
     juego_lander.*    alunizaje con gravedad, empuje y combustible
     juego_duelo.*     duelo de reaccion a dos botones
+    juego_carrera.*   OpenLEDRace: dos autos a fuerza de pulsaciones
     modo_ambiente.*   automata celular elemental (no es un juego)
     pantallas.*       Highscores e IP (no son juegos, pero entran al selector)
     panel_web.*       AP WiFi + pagina de estado y tuneo
@@ -52,6 +53,7 @@
 #include "juego_esquiva.h"
 #include "juego_lander.h"
 #include "juego_duelo.h"
+#include "juego_carrera.h"
 #include "modo_ambiente.h"
 #include "pantallas.h"
 #include "panel_web.h"
@@ -70,6 +72,7 @@ const JuegoDef JUEGOS[] = {
   { " Salta Muros ",      nuevoEsquiva,       loopEsquiva,       lcdEsquiva,       webEsquiva       },
   { " Alunizaje ",       nuevoLander,        loopLander,        lcdLander,        webLander        },
   { " Reaccion ",        nuevoDuelo,         loopDuelo,         lcdDuelo,         webDuelo         },
+  { " Carrera ",      nuevoCarrera,       loopCarrera,       lcdCarrera,       webCarrera       },
   { " Ambiente ",     nuevoAmbiente,      loopAmbiente,      lcdAmbiente,      webAmbiente      },
   { " Highscores ",   nuevoHighscores,    loopHighscores,    lcdHighscores,    webHighscores    },
   { " IP ",           nuevoIP,            loopIP,            lcdIP,            webIP            },

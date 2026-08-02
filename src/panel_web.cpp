@@ -18,6 +18,7 @@
 #include "juego_esquiva.h"
 #include "juego_lander.h"
 #include "juego_duelo.h"
+#include "juego_carrera.h"
 
 String apIP;
 static AsyncWebServer server(80);
@@ -65,6 +66,11 @@ static const Param PARAMS[] = {
   { "Lander",        "lndCombustible",    "Combustible (ms)",      &LND_COMBUSTIBLE     },
   { "Duelo",         "dueEsperaMin",      "Espera minima (ms)",    &DUE_ESPERA_MIN      },
   { "Duelo",         "dueEsperaMax",      "Espera maxima (ms)",    &DUE_ESPERA_MAX      },
+  { "Carrera",       "carImpulso",        "Impulso x pulsacion",   &CAR_IMPULSO         },
+  { "Carrera",       "carFriccion",       "Friccion (x100 /s)",    &CAR_FRICCION        },
+  { "Carrera",       "carGravedad",       "Pendiente (LEDs/s2)",   &CAR_GRAVEDAD        },
+  { "Carrera",       "carVueltasMin",     "Vueltas (pote min)",    &CAR_VUELTAS_MIN     },
+  { "Carrera",       "carVueltasMax",     "Vueltas (pote max)",    &CAR_VUELTAS_MAX     },
 };
 static const uint8_t NUM_PARAMS = sizeof(PARAMS) / sizeof(PARAMS[0]);
 

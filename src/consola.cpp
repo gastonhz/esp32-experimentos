@@ -288,6 +288,7 @@ const RecordDef RECORDS[] = {
   { "hsEsq",    "Salta Muros",       "",       " muros",   false },
   { "hsLander", "Alunizaje",        "",       " aluniza.", false },
   { "hsDuelo",  "Reaccion",      "",       " ms",      true  },   // gana el tiempo mas CHICO
+  { "hsCarr",   "Carrera",       "",       " ms/vta",  true  },   // idem: mejor vuelta
 };
 static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
               "RECORDS[] y el enum Record quedaron desincronizados");

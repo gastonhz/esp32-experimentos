@@ -127,7 +127,7 @@ String barraLCD(uint16_t valor, uint16_t maximo, uint8_t ancho);
 // viejo: la NVS tiene ciclos de escritura contados.
 enum Record { REC_PONG, REC_TUG, REC_RC, REC_TWANG,
               REC_PADDLE, REC_STACKER, REC_ESQUIVA, REC_LANDER, REC_DUELO,
-              NUM_RECORDS };
+              REC_CARRERA, NUM_RECORDS };
 
 struct RecordDef {
   const char* clave;        // clave en NVS: NO cambiar, se perderia el record guardado
@@ -166,7 +166,7 @@ struct JuegoDef {
 
 enum Juego { JUEGO_PONG, JUEGO_TUG, JUEGO_ROMPECOLORES, JUEGO_TWANG,
              JUEGO_PADDLE, JUEGO_STACKER, JUEGO_ESQUIVA, JUEGO_LANDER, JUEGO_DUELO,
-             JUEGO_AMBIENTE, JUEGO_HIGHSCORES, JUEGO_IP, NUM_JUEGOS };
+             JUEGO_CARRERA, JUEGO_AMBIENTE, JUEGO_HIGHSCORES, JUEGO_IP, NUM_JUEGOS };
 
 // Idem RECORDS: el tamano lo chequea el static_assert de main.cpp. Una fila de
 // menos aca serian punteros a funcion nulos y la consola se reiniciaria al
