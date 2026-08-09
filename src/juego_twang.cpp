@@ -185,7 +185,7 @@ static void iniciarTanda() {
 }
 
 void nuevoTwang() {
-  calibrarJoyY();               // asume el stick soltado en el instante de arrancar
+  calibrarJoy(0);               // asume el stick soltado en el instante de arrancar
   velInicial  = map(leerPoteCrudo(), 0, 4095, TWANG_VEL_LENTA, TWANG_VEL_RAPIDA);
   nivel       = 1;
   vidas       = TWANG_VIDAS;
@@ -256,7 +256,7 @@ void loopTwang() {
   // El dt se mide contra el frame anterior porque el loop no tiene periodo fijo.
   float dt = (ahora - ultimoFrame) / 1000.0f;
   ultimoFrame = ahora;
-  jugadorPos += leerJoyYNorm() * TWANG_VEL_JUGADOR * dt;
+  jugadorPos += leerJoyNorm(0) * TWANG_VEL_JUGADOR * dt;
 
   // Cintas: arrastran al que este parado encima, ademas de lo que haga el
   // joystick. Como TWANG_CINTA_VEL es bastante menor que TWANG_VEL_JUGADOR se

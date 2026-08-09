@@ -14,7 +14,7 @@ void nuevoHighscores() {
 }
 
 void loopHighscores() {
-  int8_t paso = joystickPasoX();
+  int8_t paso = joystickPaso(0);
   if (paso) {
     verIndice = (verIndice + NUM_RECORDS + paso) % NUM_RECORDS;
     beep(1200, 25);

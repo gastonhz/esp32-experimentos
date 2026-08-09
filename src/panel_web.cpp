@@ -19,6 +19,8 @@
 #include "juego_lander.h"
 #include "juego_duelo.h"
 #include "juego_carrera.h"
+#include "juego_pelea.h"
+#include "juego_western.h"
 
 String apIP;
 static AsyncWebServer server(80);
@@ -71,21 +73,32 @@ static const Param PARAMS[] = {
   { "Carrera",       "carGravedad",       "Pendiente (LEDs/s2)",   &CAR_GRAVEDAD        },
   { "Carrera",       "carVueltasMin",     "Vueltas (pote min)",    &CAR_VUELTAS_MIN     },
   { "Carrera",       "carVueltasMax",     "Vueltas (pote max)",    &CAR_VUELTAS_MAX     },
+  { "Carrera",       "carMesetaMin",      "Cima corta (LEDs)",     &CAR_MESETA_MIN      },
+  { "Carrera",       "carMesetaMax",      "Cima larga (LEDs)",     &CAR_MESETA_MAX      },
+  { "Pelea",         "pelVelJugador",     "Caminar (LEDs/s)",      &PEL_VEL_JUGADOR     },
+  { "Pelea",         "pelAlcanceCorto",   "Alcance toque (LEDs)",  &PEL_ALCANCE_CORTO   },
+  { "Pelea",         "pelAlcanceLargo",   "Alcance cargado (LEDs)",&PEL_ALCANCE_LARGO   },
+  { "Pelea",         "pelCargaMin",       "Umbral de carga (ms)",  &PEL_CARGA_MIN       },
+  { "Pelea",         "pelCargaMax",       "Carga completa (ms)",   &PEL_CARGA_MAX       },
+  { "Pelea",         "pelRecupCorta",     "Recup. toque (ms)",     &PEL_RECUP_CORTA     },
+  { "Pelea",         "pelRecupLarga",     "Recup. cargado (ms)",   &PEL_RECUP_LARGA     },
+  { "Western",       "wesVelJugador",     "Caminar (LEDs/s)",      &WES_VEL_JUGADOR     },
+  { "Western",       "wesVelBala",        "Bala (LEDs/s)",         &WES_VEL_BALA        },
+  { "Western",       "wesCargador",       "Balas por cargador",    &WES_CARGADOR        },
+  { "Western",       "wesRecargaMs",      "Recarga (ms)",          &WES_RECARGA_MS      },
+  { "Western",       "wesInvulMs",        "Gracia tras herida (ms)", &WES_INVUL_MS      },
+  { "Western",       "wesQuemarropa",     "Quemarropa (LEDs)",     &WES_QUEMARROPA      },
+  { "Western",       "wesGiroMin",        "Umbral de giro (%)",    &WES_GIRO_MIN        },
 };
 static const uint8_t NUM_PARAMS = sizeof(PARAMS) / sizeof(PARAMS[0]);
 
-static String paginaHtml() {
+// Lo unico de la pagina que cambia solo: estado del juego y records. Va aparte
+// porque se sirve por dos vias -- dentro de la pagina completa la primera vez, y
+// por /estado en cada refresco.
+static String bloqueVivo() {
   String h;
-  h.reserve(6000);
-  h += "<!DOCTYPE html><html><head><meta charset=\"utf-8\">";
-  h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
-  // Recarga sola cada 3 s: alcanza para ver el estado en vivo sin JS ni websockets.
-  h += "<meta http-equiv=\"refresh\" content=\"3\">";
-  h += "<title>gasticonsola</title></head>";
-  h += "<body style=\"font-family:sans-serif;margin:16px;max-width:480px\">";
-  h += "<h1>gasticonsola</h1>";
+  h.reserve(1200);
 
-  // --- Estado en vivo ---
   h += "<h2>Ahora</h2><p>";
   if (pantalla == MENU) {
     h += "En el menu, resaltado: <b>" + String(JUEGOS[juegoSel].nombre) + "</b>";
@@ -96,12 +109,25 @@ static String paginaHtml() {
   h += "<br><small>Ultimo reinicio: " + textoCausaReset() + "</small>";
   h += "</p>";
 
-  // --- Records guardados ---
   h += "<h2>Records</h2><ul>";
   for (uint8_t i = 0; i < NUM_RECORDS; i++) {
     h += "<li>" + String(RECORDS[i].nombre) + ": " + textoRecord(i) + "</li>";
   }
   h += "</ul>";
+  return h;
+}
+
+static String paginaHtml() {
+  String h;
+  h.reserve(9000);
+  h += "<!DOCTYPE html><html><head><meta charset=\"utf-8\">";
+  h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
+  h += "<title>gasticonsola</title></head>";
+  h += "<body style=\"font-family:sans-serif;margin:16px;max-width:480px\">";
+  h += "<h1>gasticonsola</h1>";
+
+  // --- Estado en vivo (lo repinta el script del final) ---
+  h += "<div id=\"vivo\">" + bloqueVivo() + "</div>";
 
   // --- Parametros tuneables en caliente ---
   h += "<h2>Parametros</h2><form method=\"GET\" action=\"/set\">";
@@ -117,6 +143,20 @@ static String paginaHtml() {
   }
   h += "<p><input type=\"submit\" value=\"Aplicar\"></p></form>";
 
+  // Refresco del estado sin recargar la pagina. Antes esto era un
+  // <meta http-equiv="refresh" content="3">, que era mas simple pero hacia
+  // inusable el formulario: cada 3 segundos el navegador recargaba entero y se
+  // perdia lo que se estuviera tipeando antes de llegar a apretar Aplicar.
+  // Repintando solo el div los campos quedan intactos. Si el navegador no
+  // ejecuta el script no se rompe nada: la pagina se ve igual, solo deja de
+  // actualizarse sola. Sin librerias ni CDN a proposito -- la red la sirve el
+  // propio ESP32 y no tiene salida a internet.
+  h += "<script>setInterval(function(){"
+       "fetch('/estado').then(function(r){return r.text();})"
+       ".then(function(t){document.getElementById('vivo').innerHTML=t;})"
+       ".catch(function(){});"
+       "},3000);</script>";
+
   h += "</body></html>";
   return h;
 }
@@ -130,6 +170,11 @@ void iniciarPanelWeb() {
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send(200, "text/html", paginaHtml());
+  });
+
+  // Solo el fragmento que cambia solo: lo pide el script cada 3 s.
+  server.on("/estado", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/html", bloqueVivo());
   });
 
   server.on("/set", HTTP_GET, [](AsyncWebServerRequest* request) {

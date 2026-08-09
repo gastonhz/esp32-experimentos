@@ -1,11 +1,14 @@
 /*********
   MAQUINA DE JUEGOS LED — consola 1D sobre tira WS2812B (ESP32 + FastLED).
 
-  Al encender aparece un SELECTOR: con el eje X del joystick se pasa de juego
-  (izquierda/derecha, con wraparound) y con el boton Verde (P1) se arranca el
-  resaltado; el Azul (P2) queda libre para las partidas de dos jugadores. El
-  pulsador de reset vuelve al selector desde cualquier juego (y al terminar una
-  partida vuelve solo).
+  Al encender aparece un SELECTOR: con el eje del control Verde (P1) se pasa de
+  juego (izquierda/derecha, con wraparound) y con su boton se arranca el
+  resaltado; el control Azul (P2) no se usa en el menu. El pulsador de reset
+  vuelve al selector desde cualquier juego (y al terminar una partida vuelve
+  solo).
+
+  Hay un control por jugador, cada uno con UN eje analogico y un boton arcade.
+  Los juegos de un solo jugador usan siempre el del Verde.
 
   Este archivo es el ARMADO de la consola, no la logica: la tabla JUEGOS[] de
   abajo es la lista del selector, y cada fila apunta a un juego_*.cpp que se
@@ -23,6 +26,8 @@
     juego_lander.*    alunizaje con gravedad, empuje y combustible
     juego_duelo.*     duelo de reaccion a dos botones
     juego_carrera.*   OpenLEDRace: dos autos a fuerza de pulsaciones
+    juego_pelea.*     combate cuerpo a cuerpo: golpe corto vs. golpe cargado
+    juego_western.*   duelo a distancia con balas lentas y pistoleros direccionales
     modo_ambiente.*   automata celular elemental (no es un juego)
     pantallas.*       Highscores e IP (no son juegos, pero entran al selector)
     panel_web.*       AP WiFi + pagina de estado y tuneo
@@ -39,7 +44,8 @@
     LCD 1602: I2C 0x27, SDA=GPIO21, SCL=GPIO22 (marcador + mensajes de estado)
     Reset:    GPIO18 a GND (pulsador; INPUT_PULLUP, apretado = LOW) -> vuelve al menu
     Pote:     GPIO34 (ADC1, input-only) -- B10k: extremos a 3.3V/GND, cursor al pin
-    Joystick: PS2 analogico -- VRy=GPIO33 (ADC1), VRx=GPIO32 (ADC1), VCC a 3.3V
+    Joystick P1 (Verde): eje a GPIO32 (ADC1), alimentado a 3.3V
+    Joystick P2 (Azul):  eje a GPIO33 (ADC1), alimentado a 3.3V
     Tira alimentada por fuente externa 5V, masa comun, cap de 1000uF al inicio.
 *********/
 
@@ -54,6 +60,8 @@
 #include "juego_lander.h"
 #include "juego_duelo.h"
 #include "juego_carrera.h"
+#include "juego_pelea.h"
+#include "juego_western.h"
 #include "modo_ambiente.h"
 #include "pantallas.h"
 #include "panel_web.h"
@@ -73,6 +81,8 @@ const JuegoDef JUEGOS[] = {
   { " Alunizaje ",       nuevoLander,        loopLander,        lcdLander,        webLander        },
   { " Reaccion ",        nuevoDuelo,         loopDuelo,         lcdDuelo,         webDuelo         },
   { " Carrera ",      nuevoCarrera,       loopCarrera,       lcdCarrera,       webCarrera       },
+  { " Pelea ",        nuevoPelea,         loopPelea,         lcdPelea,         webPelea         },
+  { " Western ",      nuevoWestern,       loopWestern,       lcdWestern,       webWestern       },
   { " Ambiente ",     nuevoAmbiente,      loopAmbiente,      lcdAmbiente,      webAmbiente      },
   { " Highscores ",   nuevoHighscores,    loopHighscores,    lcdHighscores,    webHighscores    },
   { " IP ",           nuevoIP,            loopIP,            lcdIP,            webIP            },
@@ -108,9 +118,9 @@ static void lcdMenu() {
 }
 
 static void loopMenu() {
-  // El joystick elige (izquierda/derecha, da la vuelta en los dos sentidos) y el
-  // Verde entra; el Azul no se usa aca, queda libre para los juegos de a dos.
-  int8_t paso = joystickPasoX();
+  // El joystick del Verde elige (izquierda/derecha, da la vuelta en los dos
+  // sentidos) y su boton entra; el control del Azul no se usa en el menu.
+  int8_t paso = joystickPaso(0);
   if (paso) {
     juegoSel = (juegoSel + NUM_JUEGOS + paso) % NUM_JUEGOS;   // +NUM_JUEGOS: el modulo de un negativo no da la vuelta
     beep(1200, 25);
@@ -152,9 +162,9 @@ void setup() {
   ledcSetup(BUZZER_CH, 2000, 8);        // canal, freq base, resolucion (bits)
   ledcAttachPin(BUZZER_PIN, BUZZER_CH); // enganchar el pin al canal
 
-  // Centro del eje X del joystick (el que navega el menu): se mide una sola vez
-  // al encender, asumiendo que nadie esta tocando el stick en ese instante.
-  calibrarJoyX();
+  // Centro de los dos joysticks: se mide una sola vez al encender, asumiendo
+  // que nadie esta tocando los sticks en ese instante.
+  calibrarJoys();
 
   iniciarRecords();
   iniciarLCD();                         // incluye el splash de arranque

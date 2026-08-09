@@ -86,7 +86,7 @@ static void nuevaPlataforma() {
 }
 
 void nuevoLander() {
-  calibrarJoyY();
+  calibrarJoy(0);
   aterrizajes = 0;
   intentos    = LND_INTENTOS;
   esRecord    = false;
@@ -187,7 +187,7 @@ void loopLander() {
 
   // Solo empuja hacia arriba: inclinar el stick hacia abajo no hace nada, la
   // gravedad ya se encarga de eso.
-  float mando = leerJoyYNorm();
+  float mando = leerJoyNorm(0);
   empujeActual = (mando > 0 && combustible > 0) ? mando : 0.0f;
   if (empujeActual > 0) {
     vel += LND_EMPUJE * empujeActual * dt;

@@ -34,10 +34,12 @@
 
 #define POT_PIN    34           // potenciometro B10k (ADC1, input-only)
 
-// Joystick analogico PS2. La tira va montada vertical, asi que el eje Y mueve
-// al jugador; el eje X, que casi ningun juego usa, navega los menus.
-#define JOY_Y_PIN  33           // VRy -> ADC1_CH5
-#define JOY_X_PIN  32           // VRx -> ADC1_CH4
+// Un joystick por jugador. Los controles van por cable USB reciclado, que solo
+// tiene cuatro conductores: 3V3, GND, un eje y el boton. Por eso de cada
+// joystick se cablea UN solo eje, el X, y ese mismo eje hace todo: mover al
+// jugador dentro del juego y navegar los menus.
+#define JOY_P1_PIN  32          // eje del control Verde (P1) -> ADC1_CH4
+#define JOY_P2_PIN  33          // eje del control Azul  (P2) -> ADC1_CH5
 
 #define LCD_ADDR 0x27
 #define LCD_SDA  21
@@ -77,20 +79,26 @@ void actualizarBotones();
 // y cuando: los que fijan dificultad lo leen UNA vez, al arrancar la partida.
 uint16_t leerPoteCrudo();
 
-// ---------- Joystick ----------
-// Eje X en pasos discretos (-1/0/+1) con auto-repeat, para navegar menus.
-int8_t joystickPasoX();
-void   calibrarJoyX();          // una sola vez en setup(): el stick esta suelto al encender
+// ---------- Joysticks ----------
+// Todo se indexa por jugador, igual que btnFlanco[]/btnEstable[]: 0 = Verde
+// (P1), 1 = Azul (P2). Los juegos de un solo jugador usan siempre el 0.
 
-// Eje Y como deflexion continua, de -1.0 a +1.0 (+ hacia el final de la tira),
-// con zona muerta y arranque suave en el borde. Cada juego lo escala a lo suyo:
+// Deflexion continua del eje, de -1.0 a +1.0 (+ hacia el final de la tira), con
+// zona muerta y arranque suave en el borde. Cada juego la escala a lo suyo:
 // velocidad, empuje o posicion absoluta.
-float leerJoyYNorm();
+float leerJoyNorm(uint8_t jugador);
+
+// El mismo eje en pasos discretos (-1/0/+1) con auto-repeat, para navegar
+// menus. Usa una zona muerta mas ancha que leerJoyNorm: elegir en una lista no
+// necesita precision, y asi el menu no se mueve solo.
+int8_t joystickPaso(uint8_t jugador);
+
 // El centro real de un joystick barato no cae exacto en 2048 y el desvio puede
 // superar la zona muerta (se siente como que el personaje "cae" solo). Por eso
-// todo juego que use el eje Y llama a esto al arrancar la partida, asumiendo
-// que nadie esta tocando el stick en ese instante.
-void calibrarJoyY();
+// todo juego que use el eje llama a calibrarJoy() al arrancar la partida,
+// asumiendo que nadie esta tocando el stick en ese instante.
+void calibrarJoy(uint8_t jugador);
+void calibrarJoys();            // los dos, una sola vez en setup()
 
 // ---------- Buzzer (LEDC, no bloqueante) ----------
 struct Nota { uint16_t freq; uint16_t dur; };   // freq 0 = silencio (pausa)
@@ -127,7 +135,7 @@ String barraLCD(uint16_t valor, uint16_t maximo, uint8_t ancho);
 // viejo: la NVS tiene ciclos de escritura contados.
 enum Record { REC_PONG, REC_TUG, REC_RC, REC_TWANG,
               REC_PADDLE, REC_STACKER, REC_ESQUIVA, REC_LANDER, REC_DUELO,
-              REC_CARRERA, NUM_RECORDS };
+              REC_CARRERA, REC_PELEA, REC_WESTERN, NUM_RECORDS };
 
 struct RecordDef {
   const char* clave;        // clave en NVS: NO cambiar, se perderia el record guardado
@@ -166,7 +174,8 @@ struct JuegoDef {
 
 enum Juego { JUEGO_PONG, JUEGO_TUG, JUEGO_ROMPECOLORES, JUEGO_TWANG,
              JUEGO_PADDLE, JUEGO_STACKER, JUEGO_ESQUIVA, JUEGO_LANDER, JUEGO_DUELO,
-             JUEGO_CARRERA, JUEGO_AMBIENTE, JUEGO_HIGHSCORES, JUEGO_IP, NUM_JUEGOS };
+             JUEGO_CARRERA, JUEGO_PELEA, JUEGO_WESTERN,
+             JUEGO_AMBIENTE, JUEGO_HIGHSCORES, JUEGO_IP, NUM_JUEGOS };
 
 // Idem RECORDS: el tamano lo chequea el static_assert de main.cpp. Una fila de
 // menos aca serian punteros a funcion nulos y la consola se reiniciaria al

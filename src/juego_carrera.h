@@ -16,3 +16,5 @@ extern uint16_t CAR_FRICCION;     // frenado por segundo, en centesimas (180 = 1
 extern uint16_t CAR_GRAVEDAD;     // LEDs/s^2 que cobra o devuelve la pendiente maxima
 extern uint16_t CAR_VUELTAS_MIN;  // vueltas con el pote al minimo
 extern uint16_t CAR_VUELTAS_MAX;  // vueltas con el pote al maximo
+extern uint16_t CAR_MESETA_MIN;   // llano mas corto en la cima de una cuesta (LEDs)
+extern uint16_t CAR_MESETA_MAX;   // llano mas largo en la cima (LEDs)

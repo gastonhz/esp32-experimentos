@@ -133,7 +133,7 @@ void loopAmbiente() {
   }
 
   // El stick controla la velocidad: al centro va lento, hacia arriba acelera.
-  float mando = leerJoyYNorm();
+  float mando = leerJoyNorm(0);
   if (mando < 0) mando = 0;
   uint16_t paso = AMB_PASO_LENTO - (uint16_t)(mando * (AMB_PASO_LENTO - AMB_PASO_RAPIDO));
 

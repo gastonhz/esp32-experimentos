@@ -178,7 +178,7 @@ static void generarMuro() {
 }
 
 void nuevoEsquiva() {
-  calibrarJoyY();
+  calibrarJoy(0);
   for (uint8_t i = 0; i < ESQ_MAX_MUROS; i++) muroVivo[i] = false;
   jugadorPos   = 0;
   ultimoFrame  = millis();
@@ -231,7 +231,7 @@ void loopEsquiva() {
 
   // --- Caminar ---
   // Se camina siempre, tambien mientras se apunta: la punteria gruesa es esta.
-  jugadorPos += leerJoyYNorm() * ESQ_VEL_JUGADOR * dt;
+  jugadorPos += leerJoyNorm(0) * ESQ_VEL_JUGADOR * dt;
   if (jugadorPos < 0)         jugadorPos = 0;
   if (jugadorPos > ESQ_TECHO) jugadorPos = ESQ_TECHO;
   int16_t jugadorLed = (int16_t)(jugadorPos + 0.5f);

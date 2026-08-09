@@ -15,11 +15,13 @@
 //   verde tenue     bajada, te la devuelve
 //   apagado         llano
 //
-// Cada cuesta tiene la subida y la bajada del mismo largo, asi que a lo largo
-// de una vuelta la pendiente no regala ni roba nada: lo que cambia es DONDE
-// conviene gastar el esfuerzo. Martillar en la bajada es desperdiciarlo porque
-// la velocidad ya viene sola; lo que rinde es llegar lanzado al pie de la
-// cuesta y no aflojar mientras se sube.
+// Cada cuesta es subida + un llano en la cima + bajada, con las dos rampas del
+// mismo largo, asi que a lo largo de una vuelta la pendiente no regala ni roba
+// nada: lo que cambia es DONDE conviene gastar el esfuerzo. Martillar en la
+// bajada es desperdiciarlo porque la velocidad ya viene sola; lo que rinde es
+// llegar lanzado al pie de la cuesta y no aflojar mientras se sube. El llano de
+// la cima es el que cobra los errores: el que corona sin inercia se queda ahi
+// arriba sin nada que lo empuje.
 
 #include "juego_carrera.h"
 
@@ -29,6 +31,8 @@ uint16_t CAR_FRICCION    = 180;   // frenado por segundo, en centesimas (180 = 1
 uint16_t CAR_GRAVEDAD    = 22;    // LEDs/s^2 de la pendiente maxima
 uint16_t CAR_VUELTAS_MIN = 3;     // vueltas con el pote al minimo
 uint16_t CAR_VUELTAS_MAX = 9;     // vueltas con el pote al maximo
+uint16_t CAR_MESETA_MIN  = 4;     // llano mas corto en la cima de una cuesta (LEDs)
+uint16_t CAR_MESETA_MAX  = 8;     // llano mas largo en la cima (LEDs)
 
 const uint16_t CAR_LARGADA_MS = 3200;  // semaforo: tres tiempos y a correr
 const uint16_t CAR_FIN_MS     = 4000;
@@ -68,20 +72,41 @@ static void sonarLargada()          { beep(1400, 260); }
 static void sonarMeta()             { tocarJingle(JINGLE_META, 3); }
 
 // ---------- Pista ----------
-// Una o dos cuestas por carrera, con la subida y la bajada del mismo largo. Se
-// generan al azar en cada partida: el circuito se aprende durante la carrera,
-// que es la mitad de la gracia de correr varias vueltas sobre el mismo trazado.
+// Una o dos cuestas por carrera, generadas al azar en cada partida: el circuito
+// se aprende durante la carrera, que es la mitad de la gracia de correr varias
+// vueltas sobre el mismo trazado.
+//
+// Cada cuesta es subida + MESETA + bajada, con las dos rampas del mismo largo.
+// Que midan igual es lo que hace que a lo largo de una vuelta la pendiente no
+// regale ni robe nada; lo unico que cambia es donde conviene gastar el esfuerzo.
+// La meseta es llano puro, asi que no rompe ese balance, pero cambia bastante
+// como se corre la cuesta: sin ella, subida y bajada quedan pegadas y coronar es
+// instantaneo -- se llega arriba y ya te esta devolviendo la velocidad. Con un
+// tramo llano en la cima, el que llego sin inercia se queda ahi arriba pedaleando
+// en falso, y el que dosifico bien lo cruza lanzado. El llano es lo que le da
+// consecuencia a haber subido mal.
 static void generarPista() {
   for (int16_t i = 0; i < NUM_LEDS; i++) pendiente[i] = 0;
 
   uint8_t cuestas = random(1, 3);
   int16_t cursor  = CAR_MARGEN;                 // la largada siempre es llana
   for (uint8_t k = 0; k < cuestas; k++) {
-    int16_t largo = (int16_t)random(8, 14) * 2; // par: se parte justo al medio
+    int16_t rampa  = (int16_t)random(8, 14);    // largo de CADA rampa, no del total
+    int16_t meseta = (int16_t)random(CAR_MESETA_MIN, (int32_t)CAR_MESETA_MAX + 1);
+
+    // Con la meseta tuneada muy larga desde el panel no entraria ninguna cuesta y
+    // la pista saldria toda llana. Se recorta para que al menos la primera entre.
+    int16_t tope = (NUM_LEDS - 2 * CAR_MARGEN) - rampa * 2;
+    if (meseta > tope) meseta = (tope > 0) ? tope : 0;
+
+    int16_t largo = rampa * 2 + meseta;
     if (cursor + largo > NUM_LEDS - CAR_MARGEN) break;
-    for (int16_t i = 0;         i < largo / 2; i++) pendiente[cursor + i] = -100;
-    for (int16_t i = largo / 2; i < largo;     i++) pendiente[cursor + i] = +100;
-    cursor += largo + (int16_t)random(12, 25);
+
+    for (int16_t i = 0; i < rampa; i++) {
+      pendiente[cursor + i]                   = -100;   // subida
+      pendiente[cursor + rampa + meseta + i]  = +100;   // bajada, despues del llano
+    }
+    cursor += largo + (int16_t)random(12, 25);          // separacion hasta la proxima cuesta
   }
 }
 

@@ -91,7 +91,7 @@ static void prepararSaque() {
 }
 
 void nuevoPaddle() {
-  calibrarJoyY();
+  calibrarJoy(0);
   velInicial   = map(leerPoteCrudo(), 0, 4095, PAD_VEL_LENTA, PAD_VEL_RAPIDA);
   paletaCentro = 12;
   paletaLargo  = PAD_LARGO_INI;
@@ -119,7 +119,7 @@ static void moverPaleta() {
   float dt = (ahora - ultimoFrame) / 1000.0f;
   ultimoFrame = ahora;
 
-  paletaCentro += leerJoyYNorm() * PAD_VEL_JUGADOR * dt;
+  paletaCentro += leerJoyNorm(0) * PAD_VEL_JUGADOR * dt;
   float minimo = paletaLargo / 2.0f;
   float maximo = (float)PAD_TOPE;
   if (paletaCentro < minimo) paletaCentro = minimo;

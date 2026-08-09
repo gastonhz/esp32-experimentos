@@ -67,12 +67,20 @@ uint16_t leerPoteCrudo() {
   return s / 4;
 }
 
-// ---------- Joystick ----------
+// ---------- Joysticks ----------
+// Un eje por jugador, indexados igual que los botones: 0 = Verde, 1 = Azul.
+const uint8_t PIN_JOY[2] = { JOY_P1_PIN, JOY_P2_PIN };
+
+// Los dos controles son caseros y cada uno pudo quedar montado con el eje para
+// el lado contrario. Se corrige aca, en un solo lugar, en vez de repartir
+// signos por el codigo de cada juego.
+const bool JOY_INVERTIDO[2] = { false, false };
+
 const uint16_t JOY_CENTRO_NOMINAL = 2048;  // centro teorico de 12 bits
-const uint16_t JOY_Y_MUERTA       = 200;   // zona muerta del eje de juego
+const uint16_t JOY_MUERTA_JUEGO   = 200;   // zona muerta moviendo al jugador
 // Zona muerta ancha para el menu: elegir juego no necesita precision y asi el
 // menu no se mueve solo.
-const uint16_t JOY_X_MUERTA   = 700;
+const uint16_t JOY_MUERTA_MENU    = 700;
 // Auto-repeat manteniendo el stick al costado. Despues de unos pasos seguidos
 // acelera: con doce entradas en el menu, cruzar la lista al ritmo lento se hace
 // eterno, pero arrancar rapido haria que un toque suelto se pase de largo.
@@ -80,8 +88,8 @@ const uint16_t MENU_REPETIR_MS     = 350;
 const uint16_t MENU_REPETIR_RAPIDO = 140;
 const uint8_t  MENU_PASOS_ACELERA  = 3;    // pasos seguidos antes de acelerar
 
-static uint16_t joyCentroX = JOY_CENTRO_NOMINAL;   // se mide una vez en setup()
-static uint16_t joyCentroY = JOY_CENTRO_NOMINAL;   // se remide al empezar cada partida
+// Se miden los dos en setup() y cada juego remide el suyo al empezar la partida.
+static uint16_t joyCentro[2] = { JOY_CENTRO_NOMINAL, JOY_CENTRO_NOMINAL };
 
 static uint16_t promediarEje(uint8_t pin) {
   uint32_t s = 0;
@@ -89,49 +97,57 @@ static uint16_t promediarEje(uint8_t pin) {
   return s / 8;
 }
 
-void calibrarJoyX() { joyCentroX = promediarEje(JOY_X_PIN); }
-void calibrarJoyY() { joyCentroY = promediarEje(JOY_Y_PIN); }
+void calibrarJoy(uint8_t jugador) { joyCentro[jugador] = promediarEje(PIN_JOY[jugador]); }
+void calibrarJoys() { calibrarJoy(0); calibrarJoy(1); }
+
+// Lectura cruda ya centrada y con el sentido corregido: + hacia el final de la
+// tira. La comparten leerJoyNorm y joystickPaso, que solo se diferencian en la
+// zona muerta y en como traducen la deflexion.
+static int16_t desvioJoy(uint8_t jugador) {
+  int16_t d = (int16_t)analogRead(PIN_JOY[jugador]) - (int16_t)joyCentro[jugador];
+  return JOY_INVERTIDO[jugador] ? (int16_t)-d : d;
+}
 
 // Fuera de la zona muerta la deflexion arranca en 0 y crece hasta 1, asi no hay
 // salto de velocidad al cruzar el borde.
-float leerJoyYNorm() {
-  int16_t d = (int16_t)analogRead(JOY_Y_PIN) - (int16_t)joyCentroY;
+float leerJoyNorm(uint8_t jugador) {
+  int16_t d = desvioJoy(jugador);
   int16_t m = (d < 0) ? -d : d;
-  if (m <= JOY_Y_MUERTA) return 0.0f;
-  float f = (float)(m - JOY_Y_MUERTA) / (float)(joyCentroY - JOY_Y_MUERTA);
+  if (m <= JOY_MUERTA_JUEGO) return 0.0f;
+  float f = (float)(m - JOY_MUERTA_JUEGO) / (float)(joyCentro[jugador] - JOY_MUERTA_JUEGO);
   if (f > 1.0f) f = 1.0f;
   return (d > 0) ? f : -f;
 }
 
-// Convierte la deflexion del eje X en pasos discretos: devuelve -1/0/+1. Da un
+// Convierte la deflexion del eje en pasos discretos: devuelve -1/0/+1. Da un
 // paso al salir de la zona muerta y, si se mantiene el stick, repite cada
 // MENU_REPETIR_MS. Sin esto el menu se iria de largo a 60 pasos por segundo.
-// El estado es compartido entre el menu y Highscores porque nunca estan activos
-// a la vez, asi que con un solo juego de variables alcanza.
-static int8_t   joyPasoPrev  = 0;   // sentido en el que estaba el stick el frame anterior
-static uint32_t joyPasoDesde = 0;   // millis() del ultimo paso entregado
-static uint8_t  joyPasosSeguidos = 0;
+// El estado va por jugador, pero dentro de cada uno lo comparten el menu y
+// Highscores, que nunca estan activos a la vez.
+static int8_t   joyPasoPrev[2]      = { 0, 0 };  // sentido del stick el frame anterior
+static uint32_t joyPasoDesde[2]     = { 0, 0 };  // millis() del ultimo paso entregado
+static uint8_t  joyPasosSeguidos[2] = { 0, 0 };
 
-int8_t joystickPasoX() {
-  int16_t d = (int16_t)analogRead(JOY_X_PIN) - (int16_t)joyCentroX;
+int8_t joystickPaso(uint8_t jugador) {
+  int16_t d = desvioJoy(jugador);
   int8_t  dir = 0;
-  if (d >  (int16_t)JOY_X_MUERTA) dir = +1;
-  if (d < -(int16_t)JOY_X_MUERTA) dir = -1;
+  if (d >  (int16_t)JOY_MUERTA_MENU) dir = +1;
+  if (d < -(int16_t)JOY_MUERTA_MENU) dir = -1;
 
-  if (dir == 0) { joyPasoPrev = 0; return 0; }   // stick al centro: listo para el proximo paso
+  if (dir == 0) { joyPasoPrev[jugador] = 0; return 0; }  // al centro: listo para el proximo paso
 
   uint32_t ahora = millis();
-  if (dir != joyPasoPrev) {                      // recien salio de la zona muerta
-    joyPasoPrev      = dir;
-    joyPasoDesde     = ahora;
-    joyPasosSeguidos = 1;
+  if (dir != joyPasoPrev[jugador]) {                     // recien salio de la zona muerta
+    joyPasoPrev[jugador]      = dir;
+    joyPasoDesde[jugador]     = ahora;
+    joyPasosSeguidos[jugador] = 1;
     return dir;
   }
-  uint16_t espera = (joyPasosSeguidos >= MENU_PASOS_ACELERA) ? MENU_REPETIR_RAPIDO
-                                                             : MENU_REPETIR_MS;
-  if (ahora - joyPasoDesde >= espera) {          // lo mantiene: auto-repeat
-    joyPasoDesde = ahora;
-    if (joyPasosSeguidos < 255) joyPasosSeguidos++;
+  uint16_t espera = (joyPasosSeguidos[jugador] >= MENU_PASOS_ACELERA) ? MENU_REPETIR_RAPIDO
+                                                                      : MENU_REPETIR_MS;
+  if (ahora - joyPasoDesde[jugador] >= espera) {         // lo mantiene: auto-repeat
+    joyPasoDesde[jugador] = ahora;
+    if (joyPasosSeguidos[jugador] < 255) joyPasosSeguidos[jugador]++;
     return dir;
   }
   return 0;
@@ -289,6 +305,8 @@ const RecordDef RECORDS[] = {
   { "hsLander", "Alunizaje",        "",       " aluniza.", false },
   { "hsDuelo",  "Reaccion",      "",       " ms",      true  },   // gana el tiempo mas CHICO
   { "hsCarr",   "Carrera",       "",       " ms/vta",  true  },   // idem: mejor vuelta
+  { "hsPelea",  "Pelea",         "",       " golpes",  false },
+  { "hsWest",   "Western",       "",       " cruces",  false },   // balas anuladas en el aire
 };
 static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
               "RECORDS[] y el enum Record quedaron desincronizados");
