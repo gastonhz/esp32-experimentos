@@ -23,9 +23,24 @@
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 
-// Botones arcade (microswitch) a GND, con pull-up interno. Apretado = LOW.
-#define BTN_P1 14
-#define BTN_P2 27
+// ---------- Controles ----------
+// Cuatro controles iguales, cada uno con un joystick HW-504 (dos ejes + boton)
+// y un boton arcade, sobre un cable de 1,5 m y ficha DB9:
+//
+//   DB9  1=GND  3=3V3  5=SW del stick  7=VRy  8=arcade  9=VRx
+//
+// Los dos botones van a GND con pull-up interno, asi que apretado = LOW.
+#define NUM_CONTROLES 4
+
+#define BTN_C1 14               // boton arcade (DB9 pin 8)
+#define BTN_C2 27
+#define BTN_C3 32               // pin liberado al pasar los ejes al ADS1115
+#define BTN_C4 33               // idem
+
+#define SW_C1  4                // boton del propio joystick (DB9 pin 5)
+#define SW_C2  13
+#define SW_C3  17
+#define SW_C4  19
 
 #define BUZZER_PIN 25           // buzzer pasivo por LEDC
 #define BUZZER_CH  0            // canal LEDC (core arduino-esp32 2.0.x)
@@ -34,12 +49,15 @@
 
 #define POT_PIN    34           // potenciometro B10k (ADC1, input-only)
 
-// Un joystick por jugador. Los controles van por cable USB reciclado, que solo
-// tiene cuatro conductores: 3V3, GND, un eje y el boton. Por eso de cada
-// joystick se cablea UN solo eje, el X, y ese mismo eje hace todo: mover al
-// jugador dentro del juego y navegar los menus.
-#define JOY_P1_PIN  32          // eje del control Verde (P1) -> ADC1_CH4
-#define JOY_P2_PIN  33          // eje del control Azul  (P2) -> ADC1_CH5
+// Los ocho ejes entran por dos ADS1115 (ADC I2C de 16 bits) en un bus PROPIO,
+// separado del LCD. Tener bus aparte no es capricho: el backpack del display
+// corre a 5V y limita a 100 kHz, y asi los ejes van a 400 kHz y 3.3V, en spec
+// de punta a punta y sin que un cuelgue del LCD congele los controles.
+#define ADS_SDA    23
+#define ADS_SCL    26
+#define ADS_FREQ   400000UL
+#define ADS_ADDR_A 0x48         // ADDR al aire (lo baja su pull-down de 10k)
+#define ADS_ADDR_B 0x49         // ADDR puenteado al riel de 3.3V
 
 #define LCD_ADDR 0x27
 #define LCD_SDA  21
@@ -58,6 +76,26 @@ extern uint16_t BRILLO;         // techo de seguridad de corriente (tuneable por
 // tira chispea de este color se entiende solo que es un record nuevo.
 extern const CRGB COL_RECORD;
 
+// ---------- Los cuatro controles ----------
+// Nombre, inicial y color de cada control, en una sola tabla. Los juegos de dos
+// jugadores siguen usando COL_P1/COL_P2 y no se enteran de que esto existe; los
+// de cuatro se dibujan y se rotulan desde aca.
+//
+// Las abreviaturas son de DOS letras porque Azul y Amarillo empiezan igual: con
+// una sola, el marcador de cuatro ("Ve1 Az0 Ro2 Am0") quedaba ambiguo. Con dos
+// entra igual en las 16 columnas del LCD. Si algun control fisico es de otro
+// color, esta tabla es el unico lugar que hay que tocar.
+struct ControlDef {
+  const char* nombre;     // para los mensajes largos ("GANA Amarillo")
+  const char* abrev;      // dos letras, para los marcadores de cuatro
+  CRGB        color;      // con que se dibuja ese jugador en la tira
+};
+extern const ControlDef CONTROLES[NUM_CONTROLES];
+
+// "** GANA Verde **" entra en 16 columnas, pero "Amarillo" no. Esto elige la
+// forma mas vistosa que entre, para que ningun juego tenga que preocuparse.
+String textoGana(uint8_t jugador);
+
 const uint8_t ESTELA = 2;       // largo de la cola de un punto en movimiento
 
 // ---------- Dibujo ----------
@@ -70,8 +108,14 @@ void dibujarPuntoConEstela(int16_t pos, int8_t dir, const CRGB& col, uint8_t lar
 void dibujarChispasRecord();
 
 // ---------- Botones ----------
-extern bool btnFlanco[2];       // true un solo frame, al recien presionar
-extern bool btnEstable[2];      // true mientras esta presionado (ya con debounce)
+// Todo se indexa por control: 0 = C1 ... 3 = C4. Los juegos de dos jugadores
+// usan el 0 y el 1, y los de uno solo siempre el 0.
+extern bool btnFlanco[NUM_CONTROLES];    // arcade: true un frame, al presionar
+extern bool btnEstable[NUM_CONTROLES];   // arcade: true mientras esta apretado
+// El boton del propio joystick, que antes no existia. Se expone aparte del
+// arcade para que ningun juego lo confunda con el boton de accion de siempre.
+extern bool btnStickFlanco[NUM_CONTROLES];
+extern bool btnStickEstable[NUM_CONTROLES];
 void actualizarBotones();
 
 // ---------- Potenciometro ----------
@@ -80,15 +124,28 @@ void actualizarBotones();
 uint16_t leerPoteCrudo();
 
 // ---------- Joysticks ----------
-// Todo se indexa por jugador, igual que btnFlanco[]/btnEstable[]: 0 = Verde
-// (P1), 1 = Azul (P2). Los juegos de un solo jugador usan siempre el 0.
+// Dos ejes por control, indexados igual que los botones. Se nombran por lo que
+// HACEN y no por la serigrafia del modulo: el HW-504 va montado rotado adentro
+// del control, asi que su "VRx" es el eje vertical del stick.
+enum Eje { EJE_TIRA,            // VRx (A0/A2): + hacia el final de la tira
+           EJE_CRUZ,            // VRy (A1/A3): + hacia la derecha
+           NUM_EJES };
 
-// Deflexion continua del eje, de -1.0 a +1.0 (+ hacia el final de la tira), con
-// zona muerta y arranque suave en el borde. Cada juego la escala a lo suyo:
-// velocidad, empuje o posicion absoluta.
-float leerJoyNorm(uint8_t jugador);
+// Abre el bus y detecta que modulos hay. Un modulo ausente no rompe nada: sus
+// controles quedan quietos en el centro.
+void iniciarJoysticks();
 
-// El mismo eje en pasos discretos (-1/0/+1) con auto-repeat, para navegar
+// Una ronda del barrido de los ocho ejes. Va en cada pasada del loop(): no
+// bloquea, arranca las conversiones de los dos chips a la vez y recoge el
+// resultado en una pasada posterior, cuando ya paso el tiempo de conversion.
+void actualizarJoysticks();
+
+// Deflexion continua, de -1.0 a +1.0, con zona muerta y arranque suave en el
+// borde. Cada juego la escala a lo suyo: velocidad, empuje o posicion absoluta.
+float leerJoyNorm(uint8_t jugador);   // eje de la tira (el de toda la vida)
+float leerJoyCruz(uint8_t jugador);   // eje transversal, todavia sin usar
+
+// El eje de la tira en pasos discretos (-1/0/+1) con auto-repeat, para navegar
 // menus. Usa una zona muerta mas ancha que leerJoyNorm: elegir en una lista no
 // necesita precision, y asi el menu no se mueve solo.
 int8_t joystickPaso(uint8_t jugador);
@@ -97,8 +154,44 @@ int8_t joystickPaso(uint8_t jugador);
 // superar la zona muerta (se siente como que el personaje "cae" solo). Por eso
 // todo juego que use el eje llama a calibrarJoy() al arrancar la partida,
 // asumiendo que nadie esta tocando el stick en ese instante.
+//
+// Con fichas DB9 hay un modo de falla nuevo: si un control esta desenchufado,
+// su entrada del ADS flota en ~765 y calibrarla ahi dejaria ese eje clavado a
+// fondo para siempre. Por eso el centro medido se acepta solo si cae en una
+// banda plausible; si no, ese eje se marca ausente y devuelve 0 hasta la
+// proxima calibracion (o sea, hasta que empiece la proxima partida).
 void calibrarJoy(uint8_t jugador);
-void calibrarJoys();            // los dos, una sola vez en setup()
+void calibrarJoys();            // los cuatro, una sola vez en setup()
+
+// Que controles hay enchufados, segun la ultima calibracion: un DB9 desconectado
+// deja su entrada del ADS flotando fuera de la banda plausible y se detecta ahi.
+// Los juegos de cuatro jugadores lo usan para repartir la partida entre los que
+// esten, en vez de exigir los cuatro siempre.
+//
+// Se decide con que UNO de los dos ejes haya calibrado bien: si alguien tenia el
+// stick agarrado justo al empezar, hace falta una diagonal bastante decidida
+// para sacar a los dos ejes de la banda a la vez.
+bool    controlPresente(uint8_t jugador);
+uint8_t numControles();         // cuantos hay enchufados (0..NUM_CONTROLES)
+
+// ---------- Selector de cantidad de jugadores ----------
+// Pantalla previa compartida por los juegos que admiten de dos a cuatro. Existe
+// porque tener los cuatro controles enchufados no quiere decir que siempre haya
+// cuatro personas: sin esto, jugar de a dos obligaba a ir desenchufando fichas.
+//
+// Los que juegan son SIEMPRE los primeros n controles (C1..Cn), que es como
+// estan puestos sobre la mesa. La deteccion de presencia queda solo para
+// sugerir el numero de arranque.
+uint8_t jugadoresSugeridos();                  // controles enchufados, acotado a 2..4
+bool    loopSelectorJugadores(uint8_t& n);     // un frame; true cuando se confirmo
+void    lcdSelectorJugadores(const char* titulo, uint8_t n);
+
+// Zonas muertas, en cuentas de 0..4095. Tuneables desde el panel web porque el
+// punto justo se encuentra con el control en la mano, no compilando: el ADS1115
+// deja el reposo temblando +-2 cuentas, asi que hay MUCHO margen para bajarlas
+// respecto de lo que necesitaba el ADC interno del ESP32.
+extern uint16_t JOY_MUERTA_JUEGO;
+extern uint16_t JOY_MUERTA_MENU;
 
 // ---------- Buzzer (LEDC, no bloqueante) ----------
 struct Nota { uint16_t freq; uint16_t dur; };   // freq 0 = silencio (pausa)

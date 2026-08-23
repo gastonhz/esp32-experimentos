@@ -6,7 +6,7 @@
 #include "consola.h"
 
 // Cambiar aca si hace falta (WPA2 pide 8 caracteres minimo en la clave).
-#define AP_SSID "GastiConsola"
+#define AP_SSID "PixeLED"
 #define AP_PASS "led12345"
 
 extern String apIP;             // IP del AP como texto, se calcula una sola vez

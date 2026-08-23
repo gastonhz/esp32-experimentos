@@ -1,6 +1,8 @@
-// Rompecolores: un solo jugador contra un muro de colores que avanza hacia la
-// base. P1 cicla el color de la bala, P2 dispara. Si el color coincide con el
-// frente del muro lo rompe; si no, el muro crece de castigo.
+// Rompecolores: contra un muro de colores que avanza hacia la base. Antes de
+// jugar se elige el modo: con UN control (el SW cicla el color de la bala y el
+// arcade dispara) o con LOS CUATRO (cada arcade dispara el color de su propio
+// control). Si el color coincide con el frente del muro lo rompe; si no, el muro
+// crece de castigo.
 #pragma once
 
 #include "consola.h"

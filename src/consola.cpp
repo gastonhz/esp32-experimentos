@@ -14,6 +14,27 @@ uint16_t BRILLO = 128;
 
 const CRGB COL_RECORD = CRGB(255, 200, 0);
 
+// Los dos primeros reusan COL_P1/COL_P2 para que no haya dos definiciones del
+// verde y el azul que se puedan ir desincronizando. Es la misma paleta de
+// cuatro que usa el muro de Rompecolores, asi que ahi la bala de cada jugador
+// puede salir del color de su propio control.
+//
+// El amarillo es limon (255,235,0) y no ambar: el dorado de los records es
+// (255,200,0) y con un amarillo mas calido los dos se confundirian justo en la
+// animacion de fin de partida, que es donde aparecen juntos.
+const ControlDef CONTROLES[NUM_CONTROLES] = {
+  { "Verde",    "Ve", COL_P1              },
+  { "Azul",     "Az", COL_P2              },
+  { "Rojo",     "Ro", CRGB(255,   0,   0) },
+  { "Amarillo", "Am", CRGB(255, 235,   0) },
+};
+
+String textoGana(uint8_t jugador) {
+  String s = String("** GANA ") + CONTROLES[jugador].nombre + " **";
+  if (s.length() <= 16) return s;
+  return String("GANA ") + CONTROLES[jugador].nombre + "!";
+}
+
 // ---------- Dibujo ----------
 void setLed(int16_t i, const CRGB& c) {
   if (i >= 0 && i < NUM_LEDS) leds[i] = c;
@@ -37,25 +58,38 @@ void dibujarChispasRecord() {
 // ---------- Botones: debounce + flanco de bajada ----------
 const uint16_t DEBOUNCE_MS = 25;
 
-const uint8_t PIN_BTN[2] = { BTN_P1, BTN_P2 };
-bool     btnEstable[2] = { false, false };  // true = presionado (estable)
-bool     btnFlanco[2]  = { false, false };  // true un frame al recien presionar
-static bool     btnPrev[2]   = { false, false };  // ultima lectura cruda
-static uint32_t btnCambio[2] = { 0, 0 };          // millis del ultimo cambio crudo
+static const uint8_t PIN_BTN[NUM_CONTROLES]   = { BTN_C1, BTN_C2, BTN_C3, BTN_C4 };
+static const uint8_t PIN_STICK[NUM_CONTROLES] = { SW_C1,  SW_C2,  SW_C3,  SW_C4  };
+
+bool btnEstable[NUM_CONTROLES]      = { false };  // true = presionado (estable)
+bool btnFlanco[NUM_CONTROLES]       = { false };  // true un frame al presionar
+bool btnStickEstable[NUM_CONTROLES] = { false };
+bool btnStickFlanco[NUM_CONTROLES]  = { false };
+
+// Un boton cualquiera: la ultima lectura cruda y cuando cambio. Como ahora hay
+// ocho botones con el mismo tratamiento, el filtro vive en un solo lugar.
+struct EstadoBoton { bool prev; uint32_t cambio; };
+static EstadoBoton estBtn[NUM_CONTROLES]   = {};
+static EstadoBoton estStick[NUM_CONTROLES] = {};
+
+static void filtrarBoton(uint8_t pin, EstadoBoton& est, bool& estable, bool& flanco) {
+  uint32_t ahora = millis();
+  flanco = false;
+  bool raw = (digitalRead(pin) == LOW);            // apretado = LOW
+  if (raw != est.prev) {
+    est.prev   = raw;
+    est.cambio = ahora;
+  }
+  if (ahora - est.cambio >= DEBOUNCE_MS && raw != estable) {
+    estable = raw;
+    if (estable) flanco = true;                    // flanco: recien presionado
+  }
+}
 
 void actualizarBotones() {
-  uint32_t ahora = millis();
-  for (uint8_t i = 0; i < 2; i++) {
-    btnFlanco[i] = false;
-    bool raw = (digitalRead(PIN_BTN[i]) == LOW);   // apretado = LOW
-    if (raw != btnPrev[i]) {
-      btnPrev[i]   = raw;
-      btnCambio[i] = ahora;
-    }
-    if (ahora - btnCambio[i] >= DEBOUNCE_MS && raw != btnEstable[i]) {
-      btnEstable[i] = raw;
-      if (btnEstable[i]) btnFlanco[i] = true;      // flanco: recien presionado
-    }
+  for (uint8_t i = 0; i < NUM_CONTROLES; i++) {
+    filtrarBoton(PIN_BTN[i],   estBtn[i],   btnEstable[i],      btnFlanco[i]);
+    filtrarBoton(PIN_STICK[i], estStick[i], btnStickEstable[i], btnStickFlanco[i]);
   }
 }
 
@@ -67,20 +101,70 @@ uint16_t leerPoteCrudo() {
   return s / 4;
 }
 
-// ---------- Joysticks ----------
-// Un eje por jugador, indexados igual que los botones: 0 = Verde, 1 = Azul.
-const uint8_t PIN_JOY[2] = { JOY_P1_PIN, JOY_P2_PIN };
+// ---------- Joysticks: dos ADS1115 en bus propio ----------
+// Reparto de canales. Cada modulo se lleva dos controles, y de cada control el
+// canal par es el eje de la tira y el impar el transversal:
+//
+//   0x48  A0=C1 tira  A1=C1 cruz  A2=C2 tira  A3=C2 cruz
+//   0x49  A0=C3 tira  A1=C3 cruz  A2=C4 tira  A3=C4 cruz
+static const uint8_t ADS_DIR[2] = { ADS_ADDR_A, ADS_ADDR_B };
+static bool adsPresente[2] = { false, false };
 
-// Los dos controles son caseros y cada uno pudo quedar montado con el eje para
-// el lado contrario. Se corrige aca, en un solo lugar, en vez de repartir
-// signos por el codigo de cada juego.
-const bool JOY_INVERTIDO[2] = { false, false };
+static const uint8_t ADS_REG_CONV = 0x00;
+static const uint8_t ADS_REG_CONF = 0x01;
 
-const uint16_t JOY_CENTRO_NOMINAL = 2048;  // centro teorico de 12 bits
-const uint16_t JOY_MUERTA_JUEGO   = 200;   // zona muerta moviendo al jugador
+// Config fija de cada conversion; lo unico que cambia entre canales es el MUX.
+static const uint16_t ADS_CONF_BASE =
+      0x8000    // OS = 1: arrancar la conversion ahora
+    | 0x0200    // PGA = +-4.096 V (el joystick va a 3.3V, entra justo)
+    | 0x0100    // MODE = single-shot
+    | 0x00E0    // DR = 860 SPS -> 1,16 ms. El default de 128 SPS tarda 8 ms por
+                //      canal, o sea 64 ms los ocho ejes: injugable.
+    | 0x0003;   // comparador deshabilitado
+static const uint16_t ADS_CONF_MUX[4] = { 0x4000, 0x5000, 0x6000, 0x7000 };
+
+static const uint32_t ADS_CONV_US = 1300;   // 1,16 ms de conversion + margen
+
+// Fondo de escala MEDIDO, no teorico: alimentado a 3.3V el HW-504 llega a
+// ~25100 cuentas (3,13 V) porque el gimbal no barre la pista entera del pote.
+// Escalando por este numero, el centro del stick cae en ~2050 -> el mismo 2048
+// que ya usaba el ADC interno, y ninguna constante de juego hay que retocar.
+static const int32_t ADS_FONDO_ESCALA = 25100;
+
+// Los controles son caseros y alguno pudo quedar montado para el lado
+// contrario. Se corrige aca, en un solo lugar, en vez de repartir signos por el
+// codigo de cada juego. Medido con el sketch de puesta a punto: en C1 los dos
+// ejes ya crecen en el sentido bueno.
+static const bool JOY_INVERTIDO[NUM_CONTROLES][NUM_EJES] = {
+  { false, false },   // C1
+  { false, false },   // C2
+  { false, false },   // C3
+  { false, false },   // C4
+};
+
+static const uint16_t JOY_CENTRO_NOMINAL = 2048;  // centro teorico de 12 bits
+
+// Banda en la que se acepta un centro recien medido. Los ocho ejes medidos
+// reposan entre 1989 y 2107, asi que esto deja margen de sobra y sigue
+// descartando una calibracion hecha con el stick agarrado.
+static const uint16_t JOY_CENTRO_MIN = 1600;
+static const uint16_t JOY_CENTRO_MAX = 2500;
+
+// PRESENCIA es una pregunta distinta de CENTRO VALIDO, y confundirlas costaba
+// caro. Un canal sin nada conectado flota en ~765 (medido: 754 a 777 en los
+// ocho); un stick agarrado a fondo da ~0 o ~4095, nunca esa franja. Preguntando
+// "el centro es plausible?" para decidir presencia, cualquiera que empezara la
+// partida con el stick torcido quedaba marcado como desenchufado y afuera del
+// juego -- que en una mesa con cuatro personas manoseando los controles es algo
+// que pasa siempre. Preguntando "esta flotando?" hace falta que los DOS ejes
+// caigan en la franja del aire a la vez, que un joystick real no hace.
+static const uint16_t JOY_AIRE_MIN = 600;
+static const uint16_t JOY_AIRE_MAX = 950;
+
+uint16_t JOY_MUERTA_JUEGO = 60;    // zona muerta moviendo al jugador
 // Zona muerta ancha para el menu: elegir juego no necesita precision y asi el
 // menu no se mueve solo.
-const uint16_t JOY_MUERTA_MENU    = 700;
+uint16_t JOY_MUERTA_MENU  = 400;
 // Auto-repeat manteniendo el stick al costado. Despues de unos pasos seguidos
 // acelera: con doce entradas en el menu, cruzar la lista al ritmo lento se hace
 // eterno, pero arrancar rapido haria que un toque suelto se pase de largo.
@@ -88,48 +172,259 @@ const uint16_t MENU_REPETIR_MS     = 350;
 const uint16_t MENU_REPETIR_RAPIDO = 140;
 const uint8_t  MENU_PASOS_ACELERA  = 3;    // pasos seguidos antes de acelerar
 
-// Se miden los dos en setup() y cada juego remide el suyo al empezar la partida.
-static uint16_t joyCentro[2] = { JOY_CENTRO_NOMINAL, JOY_CENTRO_NOMINAL };
+// Ultima lectura de cada eje, ya escalada a 0..4095, y su centro. Se miden los
+// cuatro en setup() y cada juego remide el suyo al empezar la partida.
+static uint16_t joyVal[NUM_CONTROLES][NUM_EJES];
+static uint16_t joyCentro[NUM_CONTROLES][NUM_EJES];
+// false = ese eje no se puede leer (modulo o control ausente). Devuelve 0
+// siempre, asi un control desenchufado no arrastra al jugador.
+static bool joyOk[NUM_CONTROLES][NUM_EJES];
+// Si el control esta enchufado. Se decide por la franja del aire, no por el
+// centro: ver JOY_AIRE_MIN.
+static bool joyEnchufado[NUM_CONTROLES];
 
-static uint16_t promediarEje(uint8_t pin) {
-  uint32_t s = 0;
-  for (uint8_t i = 0; i < 8; i++) s += analogRead(pin);
-  return s / 8;
+// ---- Acceso al chip ----
+static bool adsEscribirConf(uint8_t addr, uint16_t v) {
+  Wire1.beginTransmission(addr);
+  Wire1.write(ADS_REG_CONF);
+  Wire1.write((uint8_t)(v >> 8));
+  Wire1.write((uint8_t)(v & 0xFF));
+  return Wire1.endTransmission() == 0;
 }
 
-void calibrarJoy(uint8_t jugador) { joyCentro[jugador] = promediarEje(PIN_JOY[jugador]); }
-void calibrarJoys() { calibrarJoy(0); calibrarJoy(1); }
+static bool adsLeerConversion(uint8_t addr, int16_t& out) {
+  Wire1.beginTransmission(addr);
+  Wire1.write(ADS_REG_CONV);
+  if (Wire1.endTransmission() != 0) return false;
+  if (Wire1.requestFrom((int)addr, 2) != 2) return false;
+  // Los dos read() van en lineas separadas a proposito: dentro de una misma
+  // expresion el orden de evaluacion no esta garantizado y los bytes se darian
+  // vuelta.
+  uint8_t hi = Wire1.read();
+  uint8_t lo = Wire1.read();
+  out = (int16_t)(((uint16_t)hi << 8) | lo);
+  return true;
+}
 
-// Lectura cruda ya centrada y con el sentido corregido: + hacia el final de la
-// tira. La comparten leerJoyNorm y joystickPaso, que solo se diferencian en la
-// zona muerta y en como traducen la deflexion.
-static int16_t desvioJoy(uint8_t jugador) {
-  int16_t d = (int16_t)analogRead(PIN_JOY[jugador]) - (int16_t)joyCentro[jugador];
-  return JOY_INVERTIDO[jugador] ? (int16_t)-d : d;
+// Cuentas del ADS -> el dominio 0..4095 que usa toda la consola. Se recorta
+// porque otro joystick puede barrer un poco mas que el que se midio.
+static uint16_t adsEscalar(int16_t raw) {
+  int32_t v = ((int32_t)raw * 4095) / ADS_FONDO_ESCALA;
+  if (v < 0)    v = 0;
+  if (v > 4095) v = 4095;
+  return (uint16_t)v;
+}
+
+// ---- Barrido no bloqueante ----
+// Una "ronda" es el mismo numero de canal en los dos chips: se arrancan las dos
+// conversiones juntas y despues se recogen las dos, asi los ocho ejes salen en
+// cuatro rondas y no en ocho.
+static uint8_t  adsRonda   = 0;
+static uint32_t adsDesde   = 0;
+static bool     adsEnCurso = false;
+
+static void adsGuardar(uint8_t modulo, uint8_t canal, int16_t raw) {
+  joyVal[modulo * 2 + canal / 2][canal % 2] = adsEscalar(raw);
+}
+
+static void adsArrancarRonda() {
+  bool alguno = false;
+  for (uint8_t m = 0; m < 2; m++) {
+    if (!adsPresente[m]) continue;
+    if (adsEscribirConf(ADS_DIR[m], ADS_CONF_BASE | ADS_CONF_MUX[adsRonda])) alguno = true;
+  }
+  adsEnCurso = alguno;
+  adsDesde   = micros();
+}
+
+void actualizarJoysticks() {
+  if (adsEnCurso) {
+    if (micros() - adsDesde < ADS_CONV_US) return;   // todavia convirtiendo
+    for (uint8_t m = 0; m < 2; m++) {
+      if (!adsPresente[m]) continue;
+      int16_t raw;
+      if (adsLeerConversion(ADS_DIR[m], raw)) adsGuardar(m, adsRonda, raw);
+    }
+    adsRonda = (adsRonda + 1) & 3;
+  }
+  adsArrancarRonda();
+}
+
+// ---- Arranque y calibracion ----
+void iniciarJoysticks() {
+  Wire1.begin(ADS_SDA, ADS_SCL, ADS_FREQ);
+  for (uint8_t m = 0; m < 2; m++) {
+    Wire1.beginTransmission(ADS_DIR[m]);
+    adsPresente[m] = (Wire1.endTransmission() == 0);
+    Serial.printf("[joysticks] ADS1115 0x%02X: %s\n",
+                  ADS_DIR[m], adsPresente[m] ? "ok" : "AUSENTE");
+  }
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    joyEnchufado[j] = false;
+    for (uint8_t e = 0; e < NUM_EJES; e++) {
+      joyVal[j][e]    = JOY_CENTRO_NOMINAL;
+      joyCentro[j][e] = JOY_CENTRO_NOMINAL;
+      joyOk[j][e]     = false;
+    }
+  }
+  adsRonda   = 0;
+  adsEnCurso = false;
+}
+
+// Lectura bloqueante de un canal. Solo la usa la calibracion, que corre entre
+// partidas y puede permitirse esperar; el juego lee del barrido no bloqueante.
+static bool adsLeerCanalYa(uint8_t modulo, uint8_t canal, int16_t& out) {
+  if (!adsEscribirConf(ADS_DIR[modulo], ADS_CONF_BASE | ADS_CONF_MUX[canal])) return false;
+  delayMicroseconds(ADS_CONV_US);
+  return adsLeerConversion(ADS_DIR[modulo], out);
+}
+
+void calibrarJoy(uint8_t jugador) {
+  uint8_t modulo = jugador / 2;
+  if (!adsPresente[modulo]) {
+    joyEnchufado[jugador] = false;
+    joyOk[jugador][EJE_TIRA] = joyOk[jugador][EJE_CRUZ] = false;
+    return;
+  }
+
+  // Medir primero los dos ejes, decidir despues: la presencia se resuelve
+  // mirando los dos juntos, no eje por eje.
+  uint16_t medido[NUM_EJES];
+  bool     hayLectura[NUM_EJES] = { false, false };
+
+  for (uint8_t e = 0; e < NUM_EJES; e++) {
+    uint8_t  canal = (jugador % 2) * 2 + e;
+    uint32_t suma  = 0;
+    uint8_t  n     = 0;
+    for (uint8_t i = 0; i < 8; i++) {
+      int16_t raw;
+      if (adsLeerCanalYa(modulo, canal, raw)) { suma += adsEscalar(raw); n++; }
+    }
+    if (n == 0) continue;
+    medido[e]     = suma / n;
+    hayLectura[e] = true;
+  }
+  adsEnCurso = false;   // el barrido quedo a mitad de camino: que reempiece
+
+  if (!hayLectura[EJE_TIRA] || !hayLectura[EJE_CRUZ]) {
+    joyEnchufado[jugador] = false;
+    joyOk[jugador][EJE_TIRA] = joyOk[jugador][EJE_CRUZ] = false;
+    return;
+  }
+
+  // Desenchufado = los DOS ejes flotando. Con uno solo en la franja no alcanza:
+  // podria ser un stick de verdad pasando por ahi.
+  bool aire = true;
+  for (uint8_t e = 0; e < NUM_EJES; e++) {
+    if (medido[e] < JOY_AIRE_MIN || medido[e] > JOY_AIRE_MAX) aire = false;
+  }
+  joyEnchufado[jugador] = !aire;
+  if (aire) {
+    joyOk[jugador][EJE_TIRA] = joyOk[jugador][EJE_CRUZ] = false;
+    return;
+  }
+
+  for (uint8_t e = 0; e < NUM_EJES; e++) {
+    // Un centro implausible quiere decir que estaban tocando el stick justo
+    // ahora. Se DESCARTA la medicion y se deja el centro anterior en pie, que
+    // es mejor que caer al nominal: los centros reales van de 1989 a 2107, asi
+    // que el nominal puede errarle 60 cuentas -- la zona muerta entera.
+    if (medido[e] >= JOY_CENTRO_MIN && medido[e] <= JOY_CENTRO_MAX) {
+      joyCentro[jugador][e] = medido[e];
+      joyVal[jugador][e]    = medido[e];
+    }
+    joyOk[jugador][e] = true;
+  }
+}
+
+void calibrarJoys() {
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) calibrarJoy(j);
+}
+
+bool controlPresente(uint8_t jugador) {
+  return joyEnchufado[jugador];
+}
+
+uint8_t numControles() {
+  uint8_t n = 0;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) if (controlPresente(j)) n++;
+  return n;
+}
+
+// ---------- Selector de cantidad de jugadores ----------
+uint8_t jugadoresSugeridos() {
+  uint8_t n = numControles();
+  if (n < 2) n = 2;
+  if (n > NUM_CONTROLES) n = NUM_CONTROLES;
+  return n;
+}
+
+bool loopSelectorJugadores(uint8_t& n) {
+  int8_t paso = joystickPaso(0);
+  if (paso) {
+    int8_t v = (int8_t)n + paso;
+    if (v < 2)              v = NUM_CONTROLES;   // da la vuelta en los dos sentidos
+    if (v > NUM_CONTROLES)  v = 2;
+    n = (uint8_t)v;
+    beep(1200, 25);
+  }
+  if (btnFlanco[0]) return true;
+
+  // La tira repartida en n franjas, una del color de cada control que va a
+  // jugar: se ve de un vistazo quienes entran, sin leer el LCD.
+  FastLED.clear();
+  for (uint8_t j = 0; j < n; j++) {
+    int16_t ini = (int16_t)(((int32_t)NUM_LEDS * j) / n);
+    int16_t fin = (int16_t)(((int32_t)NUM_LEDS * (j + 1)) / n) - 1;
+    for (int16_t i = ini; i <= fin; i++) setLed(i, CONTROLES[j].color);
+  }
+  nscale8(leds, NUM_LEDS, 60);
+  FastLED.show();
+  return false;
+}
+
+void lcdSelectorJugadores(const char* titulo, uint8_t n) {
+  lcdLinea(0, titulo);
+  lcdLinea(1, "< " + String(n) + " jugadores >");
+}
+
+// Lectura ya centrada y con el sentido corregido. La comparten leerJoyNorm,
+// leerJoyCruz y joystickPaso, que solo se diferencian en la zona muerta y en
+// como traducen la deflexion.
+static int16_t desvioJoy(uint8_t jugador, uint8_t eje) {
+  if (!joyOk[jugador][eje]) return 0;
+  int16_t d = (int16_t)joyVal[jugador][eje] - (int16_t)joyCentro[jugador][eje];
+  return JOY_INVERTIDO[jugador][eje] ? (int16_t)-d : d;
 }
 
 // Fuera de la zona muerta la deflexion arranca en 0 y crece hasta 1, asi no hay
 // salto de velocidad al cruzar el borde.
-float leerJoyNorm(uint8_t jugador) {
-  int16_t d = desvioJoy(jugador);
+static float leerEjeNorm(uint8_t jugador, uint8_t eje) {
+  int16_t d = desvioJoy(jugador, eje);
   int16_t m = (d < 0) ? -d : d;
-  if (m <= JOY_MUERTA_JUEGO) return 0.0f;
-  float f = (float)(m - JOY_MUERTA_JUEGO) / (float)(joyCentro[jugador] - JOY_MUERTA_JUEGO);
+  if (m <= (int16_t)JOY_MUERTA_JUEGO) return 0.0f;
+  float f = (float)(m - JOY_MUERTA_JUEGO) /
+            (float)(joyCentro[jugador][eje] - JOY_MUERTA_JUEGO);
   if (f > 1.0f) f = 1.0f;
   return (d > 0) ? f : -f;
 }
 
-// Convierte la deflexion del eje en pasos discretos: devuelve -1/0/+1. Da un
-// paso al salir de la zona muerta y, si se mantiene el stick, repite cada
+float leerJoyNorm(uint8_t jugador) { return leerEjeNorm(jugador, EJE_TIRA); }
+float leerJoyCruz(uint8_t jugador) { return leerEjeNorm(jugador, EJE_CRUZ); }
+
+// Convierte la deflexion del eje TRANSVERSAL en pasos discretos: devuelve
+// -1/0/+1. Mover el stick a los costados es lo que se corresponde con recorrer
+// una lista horizontal, y ademas deja el eje de la tira libre para lo que hace
+// dentro de cada juego. Da un paso al salir de la zona muerta y, si se mantiene el stick, repite cada
 // MENU_REPETIR_MS. Sin esto el menu se iria de largo a 60 pasos por segundo.
 // El estado va por jugador, pero dentro de cada uno lo comparten el menu y
 // Highscores, que nunca estan activos a la vez.
-static int8_t   joyPasoPrev[2]      = { 0, 0 };  // sentido del stick el frame anterior
-static uint32_t joyPasoDesde[2]     = { 0, 0 };  // millis() del ultimo paso entregado
-static uint8_t  joyPasosSeguidos[2] = { 0, 0 };
+static int8_t   joyPasoPrev[NUM_CONTROLES]      = { 0 };  // sentido del stick el frame anterior
+static uint32_t joyPasoDesde[NUM_CONTROLES]     = { 0 };  // millis() del ultimo paso entregado
+static uint8_t  joyPasosSeguidos[NUM_CONTROLES] = { 0 };
 
 int8_t joystickPaso(uint8_t jugador) {
-  int16_t d = desvioJoy(jugador);
+  int16_t d = desvioJoy(jugador, EJE_CRUZ);
   int8_t  dir = 0;
   if (d >  (int16_t)JOY_MUERTA_MENU) dir = +1;
   if (d < -(int16_t)JOY_MUERTA_MENU) dir = -1;
@@ -268,7 +563,7 @@ void iniciarLCD() {
   Wire.begin(LCD_SDA, LCD_SCL);
   lcd.init();
   lcd.backlight();
-  lcdCrudo(0, "  gasticonsola");
+  lcdCrudo(0, "    PixeLED");
   lcdCrudo(1, "  LED  -  ESP32");
 
   // El splash dura lo mismo que antes, pero ahora es una espera activa: si en
@@ -306,7 +601,7 @@ const RecordDef RECORDS[] = {
   { "hsDuelo",  "Reaccion",      "",       " ms",      true  },   // gana el tiempo mas CHICO
   { "hsCarr",   "Carrera",       "",       " ms/vta",  true  },   // idem: mejor vuelta
   { "hsPelea",  "Pelea",         "",       " golpes",  false },
-  { "hsWest",   "Western",       "",       " cruces",  false },   // balas anuladas en el aire
+  { "hsWest",   "Tiros",         "",       " cruces",  false },   // balas anuladas en el aire
 };
 static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
               "RECORDS[] y el enum Record quedaron desincronizados");
@@ -317,6 +612,10 @@ static Preferences prefs;
 void iniciarRecords() {
   // La primera vez que se enciende la placa no existe la clave todavia y
   // getUInt devuelve el 0 por defecto, que es justamente "sin record".
+  //
+  // OJO: "gasti" es el namespace de NVS, NO un nombre visible. Quedo del nombre
+  // viejo de la consola y se deja asi a proposito: renombrarlo dejaria
+  // huerfanos todos los records ya grabados en la flash.
   prefs.begin("gasti", false);
   for (uint8_t i = 0; i < NUM_RECORDS; i++) {
     hsValor[i] = prefs.getUInt(RECORDS[i].clave, 0);

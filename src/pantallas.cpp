@@ -50,8 +50,9 @@ void loopIP() {
   FastLED.show();
 }
 
-// El SSID va solo (sin prefijo) porque "GastiConsola" ya come 12 de las 16
-// columnas. La clave no se muestra: la sabe el que armo la consola.
+// El SSID va solo, sin prefijo: el nombre de la red ya se entiende por si mismo
+// y asi queda lugar para la IP completa en la otra fila. La clave no se muestra:
+// la sabe el que armo la consola.
 void lcdIP() {
   lcdLinea(0, AP_SSID);
   lcdLinea(1, apIP);

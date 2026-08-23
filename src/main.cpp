@@ -1,14 +1,15 @@
 /*********
-  MAQUINA DE JUEGOS LED — consola 1D sobre tira WS2812B (ESP32 + FastLED).
+  PixeLED — consola de juegos 1D sobre tira WS2812B (ESP32 + FastLED).
 
-  Al encender aparece un SELECTOR: con el eje del control Verde (P1) se pasa de
-  juego (izquierda/derecha, con wraparound) y con su boton se arranca el
-  resaltado; el control Azul (P2) no se usa en el menu. El pulsador de reset
-  vuelve al selector desde cualquier juego (y al terminar una partida vuelve
-  solo).
+  Al encender aparece un SELECTOR: con el eje TRANSVERSAL del control Verde (C1)
+  se pasa de juego (izquierda/derecha, con wraparound) y con su boton arcade se
+  arranca el resaltado; los otros controles no se usan en el menu. El pulsador de
+  reset vuelve al selector desde cualquier juego (y al terminar una partida
+  vuelve solo).
 
-  Hay un control por jugador, cada uno con UN eje analogico y un boton arcade.
-  Los juegos de un solo jugador usan siempre el del Verde.
+  Hay CUATRO controles, cada uno con dos ejes analogicos, un boton arcade y el
+  boton del propio joystick. Los juegos de un solo jugador usan siempre el Verde;
+  los de varios reparten la partida entre los controles que esten enchufados.
 
   Este archivo es el ARMADO de la consola, no la logica: la tabla JUEGOS[] de
   abajo es la lista del selector, y cada fila apunta a un juego_*.cpp que se
@@ -16,18 +17,18 @@
   joystick, pote, records) esta en consola.h / consola.cpp.
 
     consola.h/.cpp    hardware y servicios comunes
-    juego_pong.*      Pong 1D, dos jugadores con un boton cada uno
+    juego_pong.*      Pong 1D con paletas moviles, media tira para cada uno
     juego_tug.*       Tira y Afloja, cinchada de botones
-    juego_rompecolores.*  un jugador contra un muro de colores
+    juego_rompecolores.*  contra un muro de colores, a uno o a cuatro controles
     juego_twang.*     dungeon 1D con joystick, lava y cintas
     juego_paddle.*    Pong de un jugador con la paleta movil
     juego_stacker.*   apilar bloques sin perder ancho
     juego_esquiva.*   muros que bajan y hay que meterse en los huecos
     juego_lander.*    alunizaje con gravedad, empuje y combustible
-    juego_duelo.*     duelo de reaccion a dos botones
-    juego_carrera.*   OpenLEDRace: dos autos a fuerza de pulsaciones
-    juego_pelea.*     combate cuerpo a cuerpo: golpe corto vs. golpe cargado
-    juego_western.*   duelo a distancia con balas lentas y pistoleros direccionales
+    juego_duelo.*     reaccion: de dos a cuatro jugadores, el primero que aprieta
+    juego_carrera.*   OpenLEDRace: hasta cuatro autos a fuerza de pulsaciones
+    juego_pelea.*     combate cuerpo a cuerpo, de dos a cuatro peleadores
+    juego_western.*   Tiros: duelo a distancia con balas lentas y direccionales
     modo_ambiente.*   automata celular elemental (no es un juego)
     pantallas.*       Highscores e IP (no son juegos, pero entran al selector)
     panel_web.*       AP WiFi + pagina de estado y tuneo
@@ -38,15 +39,18 @@
 
   Hardware (ver scripts-y-pruebas/setup-hardware-maquina-juegos-led.md):
     Datos:    GPIO16 -> SN74AHCT125N -> 470ohm -> DIN tira (100 LEDs WS2812B)
-    Boton P1 (Verde): GPIO14 a GND (arcade/microswitch; INPUT_PULLUP, apretado = LOW)
-    Boton P2 (Azul):  GPIO27 a GND (idem)
     Buzzer:   GPIO25 (buzzer pasivo, PWM por LEDC) a GND
     LCD 1602: I2C 0x27, SDA=GPIO21, SCL=GPIO22 (marcador + mensajes de estado)
     Reset:    GPIO18 a GND (pulsador; INPUT_PULLUP, apretado = LOW) -> vuelve al menu
     Pote:     GPIO34 (ADC1, input-only) -- B10k: extremos a 3.3V/GND, cursor al pin
-    Joystick P1 (Verde): eje a GPIO32 (ADC1), alimentado a 3.3V
-    Joystick P2 (Azul):  eje a GPIO33 (ADC1), alimentado a 3.3V
     Tira alimentada por fuente externa 5V, masa comun, cap de 1000uF al inicio.
+
+  Controles: cuatro, iguales, con ficha DB9 y cable de 1,5 m.
+    Arcade:   GPIO14 / 27 / 32 / 33   (a GND, INPUT_PULLUP, apretado = LOW)
+    Stick SW: GPIO4  / 13 / 17 / 19   (idem)
+    Ejes:     2x ADS1115 en bus I2C propio, SDA=GPIO23 SCL=GPIO26 a 400 kHz
+              0x48 -> C1 y C2,  0x49 -> C3 y C4  (ADDR del segundo a 3.3V)
+              Joysticks alimentados a 3.3V, no a 5V: el SW va directo al ESP32.
 *********/
 
 #include "consola.h"
@@ -67,25 +71,29 @@
 #include "panel_web.h"
 
 // ---------- La lista del selector ----------
-// El orden tiene que coincidir con el enum Juego de consola.h. Los nombres
-// entran en 12 caracteres: en el menu se dibujan como "< nombre >" sobre las
-// 16 columnas del LCD.
+// El orden tiene que coincidir con el enum Juego de consola.h.
+//
+// Los nombres van SIN espacios de relleno: los agrega lcdMenu(). Antes cada
+// nombre traia los suyos, ajustados a mano para que "< nombre >" entrara en 16
+// columnas, y esos espacios se colaban tal cual en el panel web. Este es el
+// nombre canonico de cada juego: el LCD, la web y los records salen todos de
+// aca (o de RECORDS[], que usa los mismos textos).
 const JuegoDef JUEGOS[] = {
-  { " Pong ",         nuevoPong,          loopPong,          lcdPong,          webPong          },
-  { " Tira y Afloja",  nuevoTug,           loopTug,           lcdTug,           webTug           },
-  { " Rompecolores ", nuevoRompecolores,  loopRompecolores,  lcdRompecolores,  webRompecolores  },
-  { " Twang ",        nuevoTwang,         loopTwang,         lcdTwang,         webTwang         },
-  { " Paddle ",       nuevoPaddle,        loopPaddle,        lcdPaddle,        webPaddle        },
-  { " Stacker ",      nuevoStacker,       loopStacker,       lcdStacker,       webStacker       },
-  { " Salta Muros ",      nuevoEsquiva,       loopEsquiva,       lcdEsquiva,       webEsquiva       },
-  { " Alunizaje ",       nuevoLander,        loopLander,        lcdLander,        webLander        },
-  { " Reaccion ",        nuevoDuelo,         loopDuelo,         lcdDuelo,         webDuelo         },
-  { " Carrera ",      nuevoCarrera,       loopCarrera,       lcdCarrera,       webCarrera       },
-  { " Pelea ",        nuevoPelea,         loopPelea,         lcdPelea,         webPelea         },
-  { " Western ",      nuevoWestern,       loopWestern,       lcdWestern,       webWestern       },
-  { " Ambiente ",     nuevoAmbiente,      loopAmbiente,      lcdAmbiente,      webAmbiente      },
-  { " Highscores ",   nuevoHighscores,    loopHighscores,    lcdHighscores,    webHighscores    },
-  { " IP ",           nuevoIP,            loopIP,            lcdIP,            webIP            },
+  { "Pong",         nuevoPong,          loopPong,          lcdPong,          webPong          },
+  { "Tira y Afloja", nuevoTug,           loopTug,           lcdTug,           webTug           },
+  { "Rompecolores", nuevoRompecolores,  loopRompecolores,  lcdRompecolores,  webRompecolores  },
+  { "Twang",        nuevoTwang,         loopTwang,         lcdTwang,         webTwang         },
+  { "Paddle",       nuevoPaddle,        loopPaddle,        lcdPaddle,        webPaddle        },
+  { "Stacker",      nuevoStacker,       loopStacker,       lcdStacker,       webStacker       },
+  { "Salta Muros",  nuevoEsquiva,       loopEsquiva,       lcdEsquiva,       webEsquiva       },
+  { "Alunizaje",    nuevoLander,        loopLander,        lcdLander,        webLander        },
+  { "Reaccion",     nuevoDuelo,         loopDuelo,         lcdDuelo,         webDuelo         },
+  { "Carrera",      nuevoCarrera,       loopCarrera,       lcdCarrera,       webCarrera       },
+  { "Pelea",        nuevoPelea,         loopPelea,         lcdPelea,         webPelea         },
+  { "Tiros",        nuevoWestern,       loopWestern,       lcdWestern,       webWestern       },
+  { "Ambiente",     nuevoAmbiente,      loopAmbiente,      lcdAmbiente,      webAmbiente      },
+  { "Highscores",   nuevoHighscores,    loopHighscores,    lcdHighscores,    webHighscores    },
+  { "IP",           nuevoIP,            loopIP,            lcdIP,            webIP            },
 };
 static_assert(sizeof(JUEGOS) / sizeof(JUEGOS[0]) == NUM_JUEGOS,
               "JUEGOS[] y el enum Juego quedaron desincronizados");
@@ -111,9 +119,13 @@ void volverAlMenu() {
 
 // --- Menu: juego resaltado + ayuda de controles ---
 // Las flechas alrededor del nombre invitan a mover el joystick a los costados
-// (lcdLinea ya se encarga de centrar el texto en las 16 columnas).
+// (lcdLinea ya se encarga de centrar el texto en las 16 columnas). Los nombres
+// largos pierden los espacios de adentro antes que dejarse recortar.
 static void lcdMenu() {
-  lcdLinea(0, "<" + String(JUEGOS[juegoSel].nombre) + ">");
+  String n = String(JUEGOS[juegoSel].nombre);
+  String s = "< " + n + " >";
+  if (s.length() > 16) s = "<" + n + ">";
+  lcdLinea(0, s);
   lcdLinea(1, "Verde = jugar");
 }
 
@@ -153,17 +165,20 @@ void setup() {
   // este reiniciando sola: el ESP32 ya imprime la causa del reset por su cuenta,
   // pero esta linea la deja en castellano y marca donde arranca cada boot.
   Serial.begin(115200);
-  Serial.println("\n[gasticonsola] ultimo reinicio: " + textoCausaReset());
+  Serial.println("\n[PixeLED] ultimo reinicio: " + textoCausaReset());
 
-  // Botones (jugadores + reset) a GND, con pull-up interno.
-  pinMode(BTN_P1, INPUT_PULLUP);
-  pinMode(BTN_P2, INPUT_PULLUP);
-  pinMode(RESET_PIN, INPUT_PULLUP);
+  // Los ocho botones de los controles (arcade + stick) y el reset, todos a GND
+  // con pull-up interno.
+  const uint8_t PINES_BOTON[] = { BTN_C1, BTN_C2, BTN_C3, BTN_C4,
+                                  SW_C1,  SW_C2,  SW_C3,  SW_C4, RESET_PIN };
+  for (uint8_t p : PINES_BOTON) pinMode(p, INPUT_PULLUP);
+
   ledcSetup(BUZZER_CH, 2000, 8);        // canal, freq base, resolucion (bits)
   ledcAttachPin(BUZZER_PIN, BUZZER_CH); // enganchar el pin al canal
 
-  // Centro de los dos joysticks: se mide una sola vez al encender, asumiendo
-  // que nadie esta tocando los sticks en ese instante.
+  // Bus de los ADS1115 y centro de los cuatro joysticks: se mide una sola vez
+  // al encender, asumiendo que nadie esta tocando los sticks en ese instante.
+  iniciarJoysticks();
   calibrarJoys();
 
   iniciarRecords();
@@ -183,6 +198,7 @@ void setup() {
 void loop() {
   chequearReset();
   actualizarBotones();
+  actualizarJoysticks();   // una ronda del barrido de los ocho ejes
 
   if (pantalla == MENU) loopMenu();
   else                  JUEGOS[juegoActivo].loop();

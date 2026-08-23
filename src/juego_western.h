@@ -1,5 +1,6 @@
-// Western: duelo a distancia con balas lentas. Tres vidas en cada punta. La
-// vuelta de tuerca que lo hace jugable en una dimension es que el pistolero es
+// Tiros: duelo a distancia con balas lentas, de dos a cuatro pistoleros. La
+// vida es el LARGO del cuerpo: te pegan y te quedas mas corto. La vuelta de
+// tuerca que lo hace jugable en una dimension es que el pistolero es
 // DIRECCIONAL: mira hacia donde se mueve, y solo puede disparar -- y solo puede
 // ser herido -- del lado hacia el que mira. Dar la espalda es invulnerabilidad
 // total, pero mientras tanto no se hace dano y se retrocede hacia la pared.

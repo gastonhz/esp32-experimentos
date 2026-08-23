@@ -1,6 +1,6 @@
 // ---------- Pelea: combate cuerpo a cuerpo en 1D ----------
-// Los dos peleadores se mueven con su eje y atacan con su boton. Toda la
-// profundidad esta en la DURACION de la pulsacion:
+// Los peleadores se mueven con su eje y atacan con su boton. Toda la profundidad
+// esta en la DURACION de la pulsacion:
 //
 //   toque corto   alcance chico, poco dano, se recupera enseguida
 //   mantenido     alcance largo, mucho dano, inmovil al cargar y lento al salir
@@ -12,9 +12,22 @@
 // esa ventana para salirse del rango y entrar a castigarlo en la recuperacion.
 // Sin el aviso, el golpe largo seria pura loteria; con el aviso, es una apuesta.
 //
-// Por eso los tres tiempos que importan (carga, golpe, recuperacion) son
-// distintos y visibles: el cuerpo se apaga a medias mientras se recupera, que es
-// la ventana en la que esta indefenso.
+// Pelean de dos a cuatro, la cantidad se elige antes de empezar, y dos
+// decisiones sostienen que la cosa escale sin volverse otro juego:
+//
+//   EL CUERPO ES LA VIDA. No hay barra de vida en ninguna punta: cada peleador
+//   se dibuja con tantos LEDs como vida le queda. Te pegan y encoges; te quedas
+//   sin LEDs y desapareces. Con cuatro no habia donde poner cuatro barras -- la
+//   tira tiene dos puntas --, pero ademas resulta mejor que lo que habia: el
+//   estado de la pelea se lee de un vistazo y sin mirar el LCD, y encoger es un
+//   premio consuelo, porque un cuerpo corto es un blanco mas dificil de tocar.
+//
+//   EL GOLPE PEGA A LOS DOS LADOS. No hay orientacion: el swing barre el alcance
+//   hacia ambos lados y los cuerpos se atraviesan. Antes habia un "P1 mira para
+//   arriba, P2 para abajo" que solo se sostenia porque eran exactamente dos y no
+//   se cruzaban nunca. Sacarlo no le quita nada al juego -- se sigue jugando con
+//   un boton y nada mas -- y agrega algo: un cargado largo puede llevarse dos
+//   rivales de una.
 
 #include "juego_pelea.h"
 
@@ -27,47 +40,59 @@ uint16_t PEL_CARGA_MAX     = 900;  // mas alla de esto ya no carga mas (ms)
 uint16_t PEL_RECUP_CORTA   = 200;  // inmovil despues del golpe rapido (ms)
 uint16_t PEL_RECUP_LARGA   = 650;  // inmovil despues del cargado (ms)
 
-const uint8_t  PEL_VIDA_MAX   = 6;     // tambien es el largo de la barra, en LEDs
+const uint8_t  PEL_VIDA_MAX   = 6;     // vida inicial Y largo del cuerpo, en LEDs
 const uint8_t  PEL_DANO_CORTO = 1;
 const uint8_t  PEL_DANO_LARGO = 3;
 const uint16_t PEL_GOLPE_MS   = 110;   // cuanto se ve el segmento del golpe
 const float    PEL_EMPUJE     = 2.0f;  // LEDs que retrocede el que come el golpe
 const uint16_t PEL_FIN_MS     = 4000;
 
-// La barra de vida de cada uno ocupa los primeros / ultimos PEL_VIDA_MAX LEDs.
-// Los peleadores se mueven en el medio, con un LED de aire para que el cuerpo no
-// se confunda con la punta de la barra.
-const int16_t PEL_PISO_MIN = PEL_VIDA_MAX + 1;
-const int16_t PEL_PISO_MAX = NUM_LEDS - PEL_VIDA_MAX - 2;
+// Toda la tira es piso: sin barras de vida en las puntas no hay nada que
+// esquivar. El margen es media vida, para que un cuerpo entero entre siempre.
+const int16_t PEL_PISO_MIN = PEL_VIDA_MAX / 2;
+const int16_t PEL_PISO_MAX = NUM_LEDS - 1 - PEL_VIDA_MAX / 2;
+
+const uint8_t PEL_NADIE = 255;
 
 // ---------- Estado ----------
 enum FasePel   { PEL_LIBRE, PEL_CARGANDO, PEL_GOLPEANDO, PEL_RECUPERANDO };
-enum EstadoPel { PEL_PELEANDO, PEL_FIN };
+enum EstadoPel { PEL_ELIGIENDO, PEL_PELEANDO, PEL_FIN };
 
 static EstadoPel estadoPel;
 static uint32_t  faseDesde;        // millis() de entrada a PEL_FIN
 
-static float    pos[2];
-static int8_t   vida[2];
-static FasePel  fase[2];
-static uint32_t faseCambio[2];     // millis() en que empezo la fase actual
-static uint16_t faseDura[2];       // cuanto dura la fase actual (golpe / recuperacion)
-static int16_t  alcance[2];        // alcance del golpe en curso o de la carga
-static uint8_t  dano[2];
+static bool     jugando[NUM_CONTROLES];   // controles que entraron a la pelea
+static uint8_t  numJugadores;
+static float    pos[NUM_CONTROLES];
+static int8_t   vida[NUM_CONTROLES];
+static FasePel  fase[NUM_CONTROLES];
+static uint32_t faseCambio[NUM_CONTROLES]; // millis() en que empezo la fase actual
+static uint16_t faseDura[NUM_CONTROLES];   // cuanto dura la fase actual (golpe / recuperacion)
+static int16_t  alcance[NUM_CONTROLES];    // alcance del golpe en curso o de la carga
+static uint8_t  dano[NUM_CONTROLES];
 
-static uint8_t  golpesConectados;  // los de los dos: mide lo peleada que estuvo
-static uint8_t  ganador;           // 1 o 2, valido en PEL_FIN
+static uint8_t  golpesConectados;  // los de todos: mide lo peleada que estuvo
+static uint8_t  ganador;           // indice de control, valido en PEL_FIN
 static bool     esRecord;
 static uint32_t ultimoFrame;
 
-// P1 arranca del lado del LED 0 y pega hacia arriba; P2 al reves. Los dos no se
-// atraviesan nunca (ver ordenar), asi que este sentido vale toda la partida.
-static inline int8_t sentido(uint8_t j) { return (j == 0) ? +1 : -1; }
+static inline bool vivo(uint8_t j) { return jugando[j] && vida[j] > 0; }
+
+// El cuerpo va centrado en pos y mide lo que le queda de vida.
+static inline int16_t cuerpoIni(uint8_t j) {
+  return (int16_t)(pos[j] + 0.5f) - vida[j] / 2;
+}
+static inline int16_t cuerpoFin(uint8_t j) {
+  return cuerpoIni(j) + vida[j] - 1;
+}
 
 // ---------- Sonido ----------
-static void sonarToque(uint8_t j)  { beep(j == 0 ? 1500 : 1200, 18); }
-static void sonarCargado(uint8_t j){ beep(j == 0 ?  900 :  750, 70); }
-static void sonarImpacto()         { beep(220, 120); }
+static const uint16_t PEL_TONO_TOQUE[NUM_CONTROLES]   = { 1500, 1200, 1750, 1000 };
+static const uint16_t PEL_TONO_CARGADO[NUM_CONTROLES] = {  900,  750, 1050,  620 };
+
+static void sonarToque(uint8_t j)   { beep(PEL_TONO_TOQUE[j], 18); }
+static void sonarCargado(uint8_t j) { beep(PEL_TONO_CARGADO[j], 70); }
+static void sonarImpacto()          { beep(220, 120); }
 
 // ---------- Reglas ----------
 // Traduce el tiempo de carga en alcance y dano. Por debajo de PEL_CARGA_MIN es
@@ -88,34 +113,23 @@ static int16_t alcanceDeCarga(uint32_t carga, uint8_t* danoSalida) {
   return (int16_t)(corto + ((int32_t)(largo - corto) * (int32_t)f) / 100);
 }
 
-// Los peleadores no se atraviesan: si se pisan, se separan a la mitad del
-// solape. Que P1 quede SIEMPRE del lado bajo es lo que hace valido a sentido().
-static void ordenar() {
-  if (pos[1] - pos[0] < 1.0f) {
-    float medio = (pos[0] + pos[1]) / 2.0f;
-    pos[0] = medio - 0.5f;
-    pos[1] = medio + 0.5f;
-  }
-  if (pos[0] < PEL_PISO_MIN) pos[0] = PEL_PISO_MIN;
-  if (pos[1] > PEL_PISO_MAX) pos[1] = PEL_PISO_MAX;
-  if (pos[0] > PEL_PISO_MAX) pos[0] = PEL_PISO_MAX;
-  if (pos[1] < PEL_PISO_MIN) pos[1] = PEL_PISO_MIN;
-}
-
-// El golpe no es un proyectil: se resuelve en el instante en que sale, contra la
-// posicion que tiene el rival en ese momento.
+// El golpe no es un proyectil: se resuelve en el instante en que sale, contra
+// las posiciones que tengan los rivales en ese momento. Barre el alcance hacia
+// los dos lados del cuerpo, asi que puede alcanzar a mas de uno.
 static void resolverGolpe(uint8_t j) {
-  uint8_t o = 1 - j;
-  int8_t  s = sentido(j);
+  int16_t lo = cuerpoIni(j) - alcance[j];
+  int16_t hi = cuerpoFin(j) + alcance[j];
 
-  float d = (pos[o] - pos[j]) * s;           // distancia hacia adelante
-  if (d <= 0.0f || d > (float)alcance[j]) return;
+  for (uint8_t o = 0; o < NUM_CONTROLES; o++) {
+    if (o == j || !vivo(o)) continue;
+    if (cuerpoFin(o) < lo || cuerpoIni(o) > hi) continue;   // fuera del barrido
 
-  vida[o] -= (int8_t)dano[j];
-  if (vida[o] < 0) vida[o] = 0;
-  golpesConectados++;
-  pos[o] += s * PEL_EMPUJE;                  // empujon: reabre la distancia
-  sonarImpacto();
+    vida[o] -= (int8_t)dano[j];
+    if (vida[o] < 0) vida[o] = 0;
+    golpesConectados++;
+    pos[o] += (pos[o] >= pos[j] ? +1.0f : -1.0f) * PEL_EMPUJE;  // reabre la distancia
+    sonarImpacto();
+  }
 }
 
 static void actualizarPeleador(uint8_t j, uint32_t ahora, float dt) {
@@ -132,7 +146,7 @@ static void actualizarPeleador(uint8_t j, uint32_t ahora, float dt) {
 
     case PEL_CARGANDO:
       // Inmovil mientras carga: ese es el precio del golpe largo, y es la
-      // ventana que el rival tiene para reaccionar.
+      // ventana que los rivales tienen para reaccionar.
       alcance[j] = alcanceDeCarga(ahora - faseCambio[j], &dano[j]);
       if (!btnEstable[j]) {                  // solto: sale el golpe
         fase[j]       = PEL_GOLPEANDO;
@@ -155,36 +169,44 @@ static void actualizarPeleador(uint8_t j, uint32_t ahora, float dt) {
       if (ahora - faseCambio[j] >= faseDura[j]) fase[j] = PEL_LIBRE;
       break;
   }
+
+  if (pos[j] < PEL_PISO_MIN) pos[j] = PEL_PISO_MIN;
+  if (pos[j] > PEL_PISO_MAX) pos[j] = PEL_PISO_MAX;
 }
 
 // ---------- Dibujo ----------
-// Primero los ataques de los dos y despues los cuerpos, para que un golpe que
-// llega hasta el rival no le tape el cuerpo: se tiene que ver a quien le pegan.
+// Suma en vez de pisar: ahora que los cuerpos se atraviesan, el solape se ve
+// como mezcla de colores en vez de hacer desaparecer a uno de los dos.
+static void sumarLed(int16_t i, const CRGB& c) {
+  if (i >= 0 && i < NUM_LEDS) leds[i] += c;
+}
+
+// Primero los ataques de todos y despues los cuerpos, para que un golpe que
+// llega hasta un rival no le tape el cuerpo: se tiene que ver a quien le pegan.
 static void dibujarPelea() {
   FastLED.clear();
 
-  for (int8_t k = 0; k < vida[0]; k++) setLed(k, COL_P1);
-  for (int8_t k = 0; k < vida[1]; k++) setLed(NUM_LEDS - 1 - k, COL_P2);
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!vivo(j)) continue;
+    if (fase[j] != PEL_CARGANDO && fase[j] != PEL_GOLPEANDO) continue;
 
-  for (uint8_t j = 0; j < 2; j++) {
-    int16_t p = (int16_t)(pos[j] + 0.5f);
-    int8_t  s = sentido(j);
-    CRGB    c = (j == 0) ? COL_P1 : COL_P2;
+    // Cargando: tenue, es el aviso de hasta donde va a llegar. Golpeando: el
+    // mismo segmento a pleno.
+    CRGB c = CONTROLES[j].color;
+    if (fase[j] == PEL_CARGANDO) c.nscale8(40);
+    else                         c = CRGB::White;
 
-    if (fase[j] == PEL_CARGANDO) {           // windup: hasta donde va a llegar
-      CRGB tenue = c;
-      tenue.nscale8(40);
-      for (int16_t k = 1; k <= alcance[j]; k++) setLed(p + s * k, tenue);
-    }
-    if (fase[j] == PEL_GOLPEANDO) {          // el mismo segmento, a pleno
-      for (int16_t k = 1; k <= alcance[j]; k++) setLed(p + s * k, CRGB::White);
+    for (int16_t k = 1; k <= alcance[j]; k++) {
+      sumarLed(cuerpoIni(j) - k, c);
+      sumarLed(cuerpoFin(j) + k, c);
     }
   }
 
-  for (uint8_t j = 0; j < 2; j++) {
-    CRGB c = (j == 0) ? COL_P1 : COL_P2;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!vivo(j)) continue;
+    CRGB c = CONTROLES[j].color;
     if (fase[j] == PEL_RECUPERANDO) c.nscale8(70);   // indefenso: se nota
-    setLed((int16_t)(pos[j] + 0.5f), c);
+    for (int16_t i = cuerpoIni(j); i <= cuerpoFin(j); i++) sumarLed(i, c);
   }
 
   FastLED.show();
@@ -192,25 +214,40 @@ static void dibujarPelea() {
 
 // ---------- Partida ----------
 void nuevoPelea() {
-  calibrarJoy(0);
-  calibrarJoy(1);
+  // Se calibra aca y no al empezar la pelea: durante el selector la gente esta
+  // moviendo el stick para elegir, y medir el centro ahi seria medir mal.
+  calibrarJoys();
+  numJugadores = jugadoresSugeridos();
+  estadoPel    = PEL_ELIGIENDO;
+}
+
+static void arrancarPelea() {
+  // Pelean los PRIMEROS n controles, que es como estan puestos sobre la mesa.
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) jugando[j] = (j < numJugadores);
 
   estadoPel = PEL_PELEANDO;
-  for (uint8_t j = 0; j < 2; j++) {
-    vida[j]       = (int8_t)PEL_VIDA_MAX;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    vida[j]       = jugando[j] ? (int8_t)PEL_VIDA_MAX : 0;
     fase[j]       = PEL_LIBRE;
     faseCambio[j] = 0;
     faseDura[j]   = 0;
     alcance[j]    = (int16_t)PEL_ALCANCE_CORTO;
     dano[j]       = PEL_DANO_CORTO;
+    pos[j]        = PEL_PISO_MIN;
   }
-  // Arrancan separados: bien lejos del alcance del golpe mas largo, asi la
-  // primera decision de los dos es acercarse.
-  pos[0] = PEL_PISO_MIN + 12;
-  pos[1] = PEL_PISO_MAX - 12;
+
+  // Repartidos parejo a lo largo de la tira: la primera decision de todos es
+  // hacia cual de los vecinos moverse.
+  uint8_t k = 0;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!jugando[j]) continue;
+    pos[j] = PEL_PISO_MIN +
+             (float)(PEL_PISO_MAX - PEL_PISO_MIN) * (float)k / (float)(numJugadores - 1);
+    k++;
+  }
 
   golpesConectados = 0;
-  ganador          = 0;
+  ganador          = PEL_NADIE;
   esRecord         = false;
   ultimoFrame      = millis();
 }
@@ -218,9 +255,14 @@ void nuevoPelea() {
 void loopPelea() {
   uint32_t ahora = millis();
 
+  if (estadoPel == PEL_ELIGIENDO) {
+    if (loopSelectorJugadores(numJugadores)) arrancarPelea();
+    return;
+  }
+
   if (estadoPel == PEL_FIN) {
     uint32_t t = ahora - faseDesde;
-    CRGB c = (ganador == 1) ? COL_P1 : COL_P2;
+    CRGB c = CONTROLES[ganador].color;
     FastLED.clear();
     for (uint8_t i = 0; i < NUM_LEDS; i++) {
       if ((i + t / 40) % 4 == 0) leds[i] = c;        // chase del ganador
@@ -235,11 +277,18 @@ void loopPelea() {
   ultimoFrame = ahora;
   if (dt > 0.1f) dt = 0.1f;
 
-  for (uint8_t j = 0; j < 2; j++) actualizarPeleador(j, ahora, dt);
-  ordenar();
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (vivo(j)) actualizarPeleador(j, ahora, dt);
+  }
 
-  if (vida[0] <= 0 || vida[1] <= 0) {
-    ganador   = (vida[0] <= 0) ? 2 : 1;
+  // Gana el ultimo en pie. Si el mismo golpe se llevo a los dos que quedaban,
+  // no hay ganador: se muestra el chase del ultimo que habia estado vivo.
+  uint8_t vivos = 0, ultimo = PEL_NADIE;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (vivo(j)) { vivos++; ultimo = j; }
+  }
+  if (vivos <= 1) {
+    ganador   = (ultimo != PEL_NADIE) ? ultimo : 0;
     estadoPel = PEL_FIN;
     faseDesde = ahora;
     esRecord  = intentarRecord(REC_PELEA, golpesConectados);
@@ -252,27 +301,50 @@ void loopPelea() {
 }
 
 // ---------- LCD ----------
-static String estadoCorto(uint8_t j) {
+static char estadoChar(uint8_t j) {
+  if (!vivo(j)) return 'x';
   switch (fase[j]) {
-    case PEL_CARGANDO:    return "carga";
-    case PEL_GOLPEANDO:   return "GOLPE";
-    case PEL_RECUPERANDO: return "lento";
-    default:              return "listo";
+    case PEL_CARGANDO:    return 'c';
+    case PEL_GOLPEANDO:   return 'G';
+    case PEL_RECUPERANDO: return 'r';
+    default:              return '.';
   }
+}
+
+// Con cuatro peleadores no entran los nombres: las dos filas van abreviadas y
+// en el mismo orden, "Ve6 Az4 Ro0 Am2" arriba y "Ve. Azc Rox Amr" abajo.
+static String filaAbreviada(bool estados) {
+  String s;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!jugando[j]) continue;
+    if (s.length()) s += " ";
+    s += CONTROLES[j].abrev;
+    s += estados ? estadoChar(j) : (char)('0' + (vida[j] > 9 ? 9 : vida[j]));
+  }
+  return s;
 }
 
 void lcdPelea() {
-  lcdLinea(0, "Verde " + String(vida[0]) + " - " + String(vida[1]) + " Azul");
+  if (estadoPel == PEL_ELIGIENDO) {
+    lcdSelectorJugadores("Pelea", numJugadores);
+    return;
+  }
+  lcdLinea(0, filaAbreviada(false));
 
   if (estadoPel == PEL_FIN) {
     if (esRecord) lcdLinea(1, "RECORD " + String(golpesConectados) + " golpes");
-    else          lcdLinea(1, (ganador == 1) ? "** GANA VERDE **" : "** GANA AZUL **");
+    else          lcdLinea(1, textoGana(ganador));
     return;
   }
-  lcdLinea(1, estadoCorto(0) + " | " + estadoCorto(1));
+  lcdLinea(1, filaAbreviada(true));
 }
 
 String webPelea() {
-  return "Verde " + String(vida[0]) + " - " + String(vida[1]) + " Azul (" +
-         String(golpesConectados) + " golpes)";
+  String s;
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!jugando[j]) continue;
+    if (s.length()) s += " - ";
+    s += String(CONTROLES[j].nombre) + " " + String(vida[j]);
+  }
+  return s + " (" + String(golpesConectados) + " golpes)";
 }

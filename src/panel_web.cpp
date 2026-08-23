@@ -37,10 +37,14 @@ struct Param {
 
 static const Param PARAMS[] = {
   { "Global",        "brillo",            "Brillo (0-255)",        &BRILLO              },
+  { "Global",        "joyMuertaJuego",    "Zona muerta juego",     &JOY_MUERTA_JUEGO    },
+  { "Global",        "joyMuertaMenu",     "Zona muerta menu",      &JOY_MUERTA_MENU     },
   { "Pong",          "velLenta",          "Saque lento (ms/LED)",  &VEL_LENTA           },
   { "Pong",          "velRapida",         "Saque rapido (ms/LED)", &VEL_RAPIDA          },
   { "Pong",          "velAcelera",        "Aceleracion por golpe", &VEL_ACELERA         },
-  { "Tira-Afloja",   "tugEmpuje",         "LEDs por pulsacion",    &TUG_EMPUJE          },
+  { "Pong",          "ponPaletaLargo",    "Paleta (LEDs)",         &PON_PALETA_LARGO    },
+  { "Pong",          "ponVelPaleta",      "Paleta (LEDs/s)",       &PON_VEL_PALETA      },
+  { "Tira y Afloja", "tugEmpuje",         "LEDs por pulsacion",    &TUG_EMPUJE          },
   { "Rompecolores",  "rcVelLenta",        "Muro lento (ms/LED)",   &RC_VEL_LENTA        },
   { "Rompecolores",  "rcVelRapida",       "Muro rapido (ms/LED)",  &RC_VEL_RAPIDA       },
   { "Rompecolores",  "rcProyVel",         "Bala (ms/LED)",         &RC_PROY_VEL         },
@@ -53,21 +57,21 @@ static const Param PARAMS[] = {
   { "Paddle",        "padFalloMs",        "Castigo al aire (ms)",  &PAD_FALLO_MS        },
   { "Stacker",       "stkAnchoIni",       "Ancho inicial (LEDs)",  &STK_ANCHO_INI       },
   { "Stacker",       "stkPisos",          "Pisos para ganar",      &STK_PISOS           },
-  { "Esquiva",       "esqVelJugador",     "Caminar (LEDs/s)",      &ESQ_VEL_JUGADOR     },
-  { "Esquiva",       "esqSaltoMin",       "Salto corto (LEDs)",    &ESQ_SALTO_MIN       },
-  { "Esquiva",       "esqSaltoMax",       "Salto largo (LEDs)",    &ESQ_SALTO_MAX       },
-  { "Esquiva",       "esqSaltoCarga",     "Carga del salto (ms)",  &ESQ_SALTO_CARGA_MS  },
-  { "Esquiva",       "esqDescanso",       "Descanso salto (ms)",   &ESQ_SALTO_ESPERA    },
-  { "Esquiva",       "esqHuecoMin",       "Hueco minimo (LEDs)",   &ESQ_HUECO_MIN       },
-  { "Esquiva",       "esqHuecoMax",       "Hueco maximo (LEDs)",   &ESQ_HUECO_MAX       },
-  { "Esquiva",       "esqMuroMin",        "Muro fino (LEDs)",      &ESQ_MURO_MIN        },
-  { "Esquiva",       "esqMuroMax",        "Muro grueso (LEDs)",    &ESQ_MURO_MAX        },
-  { "Lander",        "lndGravedad",       "Gravedad (LEDs/s2)",    &LND_GRAVEDAD        },
-  { "Lander",        "lndEmpuje",         "Empuje (LEDs/s2)",      &LND_EMPUJE          },
-  { "Lander",        "lndVelSegura",      "Vel. de posado (LEDs/s)", &LND_VEL_SEGURA    },
-  { "Lander",        "lndCombustible",    "Combustible (ms)",      &LND_COMBUSTIBLE     },
-  { "Duelo",         "dueEsperaMin",      "Espera minima (ms)",    &DUE_ESPERA_MIN      },
-  { "Duelo",         "dueEsperaMax",      "Espera maxima (ms)",    &DUE_ESPERA_MAX      },
+  { "Salta Muros",   "esqVelJugador",     "Caminar (LEDs/s)",      &ESQ_VEL_JUGADOR     },
+  { "Salta Muros",   "esqSaltoMin",       "Salto corto (LEDs)",    &ESQ_SALTO_MIN       },
+  { "Salta Muros",   "esqSaltoMax",       "Salto largo (LEDs)",    &ESQ_SALTO_MAX       },
+  { "Salta Muros",   "esqSaltoCarga",     "Carga del salto (ms)",  &ESQ_SALTO_CARGA_MS  },
+  { "Salta Muros",   "esqDescanso",       "Descanso salto (ms)",   &ESQ_SALTO_ESPERA    },
+  { "Salta Muros",   "esqHuecoMin",       "Hueco minimo (LEDs)",   &ESQ_HUECO_MIN       },
+  { "Salta Muros",   "esqHuecoMax",       "Hueco maximo (LEDs)",   &ESQ_HUECO_MAX       },
+  { "Salta Muros",   "esqMuroMin",        "Muro fino (LEDs)",      &ESQ_MURO_MIN        },
+  { "Salta Muros",   "esqMuroMax",        "Muro grueso (LEDs)",    &ESQ_MURO_MAX        },
+  { "Alunizaje",     "lndGravedad",       "Gravedad (LEDs/s2)",    &LND_GRAVEDAD        },
+  { "Alunizaje",     "lndEmpuje",         "Empuje (LEDs/s2)",      &LND_EMPUJE          },
+  { "Alunizaje",     "lndVelSegura",      "Vel. de posado (LEDs/s)", &LND_VEL_SEGURA    },
+  { "Alunizaje",     "lndCombustible",    "Combustible (ms)",      &LND_COMBUSTIBLE     },
+  { "Reaccion",      "dueEsperaMin",      "Espera minima (ms)",    &DUE_ESPERA_MIN      },
+  { "Reaccion",      "dueEsperaMax",      "Espera maxima (ms)",    &DUE_ESPERA_MAX      },
   { "Carrera",       "carImpulso",        "Impulso x pulsacion",   &CAR_IMPULSO         },
   { "Carrera",       "carFriccion",       "Friccion (x100 /s)",    &CAR_FRICCION        },
   { "Carrera",       "carGravedad",       "Pendiente (LEDs/s2)",   &CAR_GRAVEDAD        },
@@ -82,13 +86,13 @@ static const Param PARAMS[] = {
   { "Pelea",         "pelCargaMax",       "Carga completa (ms)",   &PEL_CARGA_MAX       },
   { "Pelea",         "pelRecupCorta",     "Recup. toque (ms)",     &PEL_RECUP_CORTA     },
   { "Pelea",         "pelRecupLarga",     "Recup. cargado (ms)",   &PEL_RECUP_LARGA     },
-  { "Western",       "wesVelJugador",     "Caminar (LEDs/s)",      &WES_VEL_JUGADOR     },
-  { "Western",       "wesVelBala",        "Bala (LEDs/s)",         &WES_VEL_BALA        },
-  { "Western",       "wesCargador",       "Balas por cargador",    &WES_CARGADOR        },
-  { "Western",       "wesRecargaMs",      "Recarga (ms)",          &WES_RECARGA_MS      },
-  { "Western",       "wesInvulMs",        "Gracia tras herida (ms)", &WES_INVUL_MS      },
-  { "Western",       "wesQuemarropa",     "Quemarropa (LEDs)",     &WES_QUEMARROPA      },
-  { "Western",       "wesGiroMin",        "Umbral de giro (%)",    &WES_GIRO_MIN        },
+  { "Tiros",         "wesVelJugador",     "Caminar (LEDs/s)",      &WES_VEL_JUGADOR     },
+  { "Tiros",         "wesVelBala",        "Bala (LEDs/s)",         &WES_VEL_BALA        },
+  { "Tiros",         "wesCargador",       "Balas por cargador",    &WES_CARGADOR        },
+  { "Tiros",         "wesRecargaMs",      "Recarga (ms)",          &WES_RECARGA_MS      },
+  { "Tiros",         "wesInvulMs",        "Gracia tras herida (ms)", &WES_INVUL_MS      },
+  { "Tiros",         "wesQuemarropa",     "Quemarropa (LEDs)",     &WES_QUEMARROPA      },
+  { "Tiros",         "wesGiroMin",        "Umbral de giro (%)",    &WES_GIRO_MIN        },
 };
 static const uint8_t NUM_PARAMS = sizeof(PARAMS) / sizeof(PARAMS[0]);
 
@@ -122,9 +126,9 @@ static String paginaHtml() {
   h.reserve(9000);
   h += "<!DOCTYPE html><html><head><meta charset=\"utf-8\">";
   h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
-  h += "<title>gasticonsola</title></head>";
+  h += "<title>PixeLED</title></head>";
   h += "<body style=\"font-family:sans-serif;margin:16px;max-width:480px\">";
-  h += "<h1>gasticonsola</h1>";
+  h += "<h1>PixeLED</h1>";
 
   // --- Estado en vivo (lo repinta el script del final) ---
   h += "<div id=\"vivo\">" + bloqueVivo() + "</div>";
