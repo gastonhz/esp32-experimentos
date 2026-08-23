@@ -55,6 +55,7 @@ static uint16_t tiempoRonda;      // ms de reaccion del que gano (0 si fue por s
 static bool     porFalso;         // la ronda se decidio porque el resto se adelanto
 static uint8_t  ganador;          // indice de control, valido en DUE_FIN
 static uint16_t mejorTiempo;      // mejor reaccion de la partida (para el record)
+static uint8_t  mejorTiempoDe;    // quien la hizo: el record es suyo aunque gane otro
 static bool     esRecord;
 
 // ---------- Sonido ----------
@@ -96,12 +97,13 @@ void nuevoDuelo() {
     numJugadores = 2;
   }
 
-  ganador      = DUE_NADIE;
-  ganadorRonda = DUE_NADIE;
-  tiempoRonda  = 0;
-  porFalso     = false;
-  mejorTiempo  = 0;
-  esRecord     = false;
+  ganador       = DUE_NADIE;
+  ganadorRonda  = DUE_NADIE;
+  tiempoRonda   = 0;
+  porFalso      = false;
+  mejorTiempo   = 0;
+  mejorTiempoDe = 0;
+  esRecord      = false;
   nuevaRonda();
 }
 
@@ -115,7 +117,7 @@ static void terminarRonda(uint8_t quien, uint16_t ms, bool falso) {
   // Solo las reacciones de verdad entran al record; las rondas ganadas porque
   // los otros se adelantaron no miden nada.
   if (!falso && ms > 0 && ms < DUE_TIEMPO_TOPE) {
-    if (mejorTiempo == 0 || ms < mejorTiempo) mejorTiempo = ms;
+    if (mejorTiempo == 0 || ms < mejorTiempo) { mejorTiempo = ms; mejorTiempoDe = quien; }
   }
 
   falso ? sonarFalso() : sonarGana();
@@ -124,7 +126,7 @@ static void terminarRonda(uint8_t quien, uint16_t ms, bool falso) {
     ganador   = quien;
     estadoDue = DUE_FIN;
     faseDesde = millis();
-    esRecord  = intentarRecord(REC_DUELO, mejorTiempo);
+    esRecord  = intentarRecord(REC_DUELO, mejorTiempo, mejorTiempoDe);
     if (esRecord) sonarRecord();
     else          sonarVictoria();
     return;

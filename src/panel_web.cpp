@@ -106,6 +106,8 @@ static String bloqueVivo() {
   h += "<h2>Ahora</h2><p>";
   if (pantalla == MENU) {
     h += "En el menu, resaltado: <b>" + String(JUEGOS[juegoSel].nombre) + "</b>";
+  } else if (pantalla == NOMBRE) {
+    h += "Firmando un record nuevo";
   } else {
     h += "Jugando: <b>" + String(JUEGOS[juegoActivo].nombre) + "</b><br>";
     h += JUEGOS[juegoActivo].web();
@@ -115,7 +117,9 @@ static String bloqueVivo() {
 
   h += "<h2>Records</h2><ul>";
   for (uint8_t i = 0; i < NUM_RECORDS; i++) {
-    h += "<li>" + String(RECORDS[i].nombre) + ": " + textoRecord(i) + "</li>";
+    String firma = String(hsNombre[i]);
+    h += "<li>" + String(RECORDS[i].nombre) + ": " + textoRecord(i) +
+         (firma.length() ? (" <b>" + firma + "</b>") : "") + "</li>";
   }
   h += "</ul>";
   return h;

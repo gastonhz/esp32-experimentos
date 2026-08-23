@@ -291,7 +291,7 @@ void loopPelea() {
     ganador   = (ultimo != PEL_NADIE) ? ultimo : 0;
     estadoPel = PEL_FIN;
     faseDesde = ahora;
-    esRecord  = intentarRecord(REC_PELEA, golpesConectados);
+    esRecord  = intentarRecord(REC_PELEA, golpesConectados, ganador);
     if (esRecord) sonarRecord();
     else          sonarVictoria();
     return;

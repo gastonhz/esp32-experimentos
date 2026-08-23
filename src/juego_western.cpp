@@ -350,7 +350,7 @@ void loopWestern() {
     ganador   = (ultimo != WES_NADIE) ? ultimo : 0;
     estadoWes = WES_FIN;
     faseDesde = ahora;
-    esRecord  = intentarRecord(REC_WESTERN, anuladas);
+    esRecord  = intentarRecord(REC_WESTERN, anuladas, ganador);
     if (esRecord) sonarRecord();
     else          sonarVictoria();
     return;

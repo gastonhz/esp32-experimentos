@@ -94,11 +94,16 @@ void actualizarBotones() {
 }
 
 // ---------- Potenciometro ----------
-// Promedia unas lecturas para suavizar el jitter del ADC.
+// Promedia unas lecturas para suavizar el jitter del ADC. Los extremos del pote
+// quedaron soldados al reves respecto de como gira la perilla, asi que se
+// invierte aca: todo el resto del codigo sigue viendo 0 = minimo, 4095 = maximo.
+static const bool POTE_INVERTIDO = true;
+
 uint16_t leerPoteCrudo() {
   uint32_t s = 0;
   for (uint8_t i = 0; i < 4; i++) s += analogRead(POT_PIN);
-  return s / 4;
+  uint16_t v = s / 4;
+  return POTE_INVERTIDO ? (uint16_t)(4095 - v) : v;
 }
 
 // ---------- Joysticks: dos ADS1115 en bus propio ----------
@@ -412,41 +417,47 @@ static float leerEjeNorm(uint8_t jugador, uint8_t eje) {
 float leerJoyNorm(uint8_t jugador) { return leerEjeNorm(jugador, EJE_TIRA); }
 float leerJoyCruz(uint8_t jugador) { return leerEjeNorm(jugador, EJE_CRUZ); }
 
-// Convierte la deflexion del eje TRANSVERSAL en pasos discretos: devuelve
-// -1/0/+1. Mover el stick a los costados es lo que se corresponde con recorrer
-// una lista horizontal, y ademas deja el eje de la tira libre para lo que hace
-// dentro de cada juego. Da un paso al salir de la zona muerta y, si se mantiene el stick, repite cada
+// Convierte la deflexion de un eje en pasos discretos: devuelve -1/0/+1. Da un
+// paso al salir de la zona muerta y, si se mantiene el stick, repite cada
 // MENU_REPETIR_MS. Sin esto el menu se iria de largo a 60 pasos por segundo.
-// El estado va por jugador, pero dentro de cada uno lo comparten el menu y
-// Highscores, que nunca estan activos a la vez.
-static int8_t   joyPasoPrev[NUM_CONTROLES]      = { 0 };  // sentido del stick el frame anterior
-static uint32_t joyPasoDesde[NUM_CONTROLES]     = { 0 };  // millis() del ultimo paso entregado
-static uint8_t  joyPasosSeguidos[NUM_CONTROLES] = { 0 };
+//
+// Los menus usan el eje TRANSVERSAL (joystickPaso): mover el stick a los
+// costados es lo que se corresponde con recorrer una lista horizontal, y ademas
+// deja el eje de la tira libre para lo que hace dentro de cada juego.
+//
+// El estado va por control y por eje. Entre pantallas se comparte, pero el
+// menu, Highscores, el selector de jugadores y el cartel de las tres letras
+// nunca estan activos a la vez.
+static int8_t   joyPasoPrev[NUM_CONTROLES][NUM_EJES]      = {};  // sentido del stick el frame anterior
+static uint32_t joyPasoDesde[NUM_CONTROLES][NUM_EJES]     = {};  // millis() del ultimo paso entregado
+static uint8_t  joyPasosSeguidos[NUM_CONTROLES][NUM_EJES] = {};
 
-int8_t joystickPaso(uint8_t jugador) {
-  int16_t d = desvioJoy(jugador, EJE_CRUZ);
+int8_t joystickPasoEje(uint8_t jugador, uint8_t eje) {
+  int16_t d = desvioJoy(jugador, eje);
   int8_t  dir = 0;
   if (d >  (int16_t)JOY_MUERTA_MENU) dir = +1;
   if (d < -(int16_t)JOY_MUERTA_MENU) dir = -1;
 
-  if (dir == 0) { joyPasoPrev[jugador] = 0; return 0; }  // al centro: listo para el proximo paso
+  if (dir == 0) { joyPasoPrev[jugador][eje] = 0; return 0; }  // al centro: listo para el proximo paso
 
   uint32_t ahora = millis();
-  if (dir != joyPasoPrev[jugador]) {                     // recien salio de la zona muerta
-    joyPasoPrev[jugador]      = dir;
-    joyPasoDesde[jugador]     = ahora;
-    joyPasosSeguidos[jugador] = 1;
+  if (dir != joyPasoPrev[jugador][eje]) {                     // recien salio de la zona muerta
+    joyPasoPrev[jugador][eje]      = dir;
+    joyPasoDesde[jugador][eje]     = ahora;
+    joyPasosSeguidos[jugador][eje] = 1;
     return dir;
   }
-  uint16_t espera = (joyPasosSeguidos[jugador] >= MENU_PASOS_ACELERA) ? MENU_REPETIR_RAPIDO
-                                                                      : MENU_REPETIR_MS;
-  if (ahora - joyPasoDesde[jugador] >= espera) {         // lo mantiene: auto-repeat
-    joyPasoDesde[jugador] = ahora;
-    if (joyPasosSeguidos[jugador] < 255) joyPasosSeguidos[jugador]++;
+  uint16_t espera = (joyPasosSeguidos[jugador][eje] >= MENU_PASOS_ACELERA) ? MENU_REPETIR_RAPIDO
+                                                                           : MENU_REPETIR_MS;
+  if (ahora - joyPasoDesde[jugador][eje] >= espera) {         // lo mantiene: auto-repeat
+    joyPasoDesde[jugador][eje] = ahora;
+    if (joyPasosSeguidos[jugador][eje] < 255) joyPasosSeguidos[jugador][eje]++;
     return dir;
   }
   return 0;
 }
+
+int8_t joystickPaso(uint8_t jugador) { return joystickPasoEje(jugador, EJE_CRUZ); }
 
 // ---------- Buzzer: efectos no bloqueantes (LEDC) ----------
 // tone() no anda bien -> usamos LEDC (ledcSetup/ledcAttachPin/ledcWriteTone).
@@ -607,7 +618,16 @@ static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
               "RECORDS[] y el enum Record quedaron desincronizados");
 
 uint32_t hsValor[NUM_RECORDS];
+char     hsNombre[NUM_RECORDS][LARGO_NOMBRE + 1];
 static Preferences prefs;
+
+static int8_t  recPend    = -1;  // record batido al que todavia le falta el nombre
+static uint8_t recPendJug = 0;   // el control que lo hizo: es el que lo va a firmar
+
+// La clave del nombre es la del valor con una "N" pegada ("hsPong" -> "hsPongN").
+// Entra holgado en los 15 caracteres que admite la NVS y no pisa nada de lo que
+// ya estaba grabado.
+static String claveNombre(uint8_t rec) { return String(RECORDS[rec].clave) + "N"; }
 
 void iniciarRecords() {
   // La primera vez que se enciende la placa no existe la clave todavia y
@@ -619,10 +639,14 @@ void iniciarRecords() {
   prefs.begin("gasti", false);
   for (uint8_t i = 0; i < NUM_RECORDS; i++) {
     hsValor[i] = prefs.getUInt(RECORDS[i].clave, 0);
+    // getString no toca el buffer si la clave no existe (los records viejos, de
+    // antes de que hubiera nombres), asi que hay que vaciarlo antes.
+    hsNombre[i][0] = '\0';
+    prefs.getString(claveNombre(i).c_str(), hsNombre[i], sizeof(hsNombre[i]));
   }
 }
 
-bool intentarRecord(uint8_t rec, uint32_t valor) {
+bool intentarRecord(uint8_t rec, uint32_t valor, uint8_t jugador) {
   if (valor == 0) return false;              // 0 esta reservado para "sin record"
   uint32_t actual = hsValor[rec];
   bool mejor = RECORDS[rec].menorEsMejor ? (actual == 0 || valor < actual)
@@ -630,8 +654,29 @@ bool intentarRecord(uint8_t rec, uint32_t valor) {
   if (!mejor) return false;
   hsValor[rec] = valor;
   prefs.putUInt(RECORDS[rec].clave, valor);
+  // Las iniciales que habia son del duenio anterior y ya no valen. Se borran
+  // aca mismo, y no cuando se guardan las nuevas, para que un corte de luz en
+  // el medio deje el record sin nombre y no con el nombre equivocado.
+  hsNombre[rec][0] = '\0';
+  prefs.putString(claveNombre(rec).c_str(), "");
+  recPend    = (int8_t)rec;
+  recPendJug = (jugador < NUM_CONTROLES) ? jugador : 0;
   return true;
 }
+
+int8_t  recordPendiente()  { return recPend; }
+uint8_t jugadorPendiente() { return recPendJug; }
+
+void ponerNombreRecord(uint8_t rec, const char* nombre) {
+  strncpy(hsNombre[rec], nombre, LARGO_NOMBRE);
+  hsNombre[rec][LARGO_NOMBRE] = '\0';
+  prefs.putString(claveNombre(rec).c_str(), hsNombre[rec]);
+  recPend = -1;
+}
+
+// El valor del record ya quedo grabado cuando se batio: lo unico que se pierde
+// al cancelar son las iniciales.
+void cancelarNombreRecord() { recPend = -1; }
 
 String textoRecord(uint8_t rec) {
   if (hsValor[rec] == 0) return "---";

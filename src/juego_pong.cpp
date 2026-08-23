@@ -151,7 +151,8 @@ static void prepararSaque() {
 // Cierra la partida: compara el total de golpes contra el record y elige el
 // sonido. Los dos puntos donde se pierde la pelota hacen exactamente lo mismo.
 static void terminarPunto() {
-  if (ganador) esRecord = intentarRecord(REC_PONG, golpesTotales);
+  // Los golpes del peloteo los pusieron los dos, asi que firma el que gano.
+  if (ganador) esRecord = intentarRecord(REC_PONG, golpesTotales, ganador - 1);
   if (!ganador)      sonarPunto();
   else if (esRecord) sonarRecord();
   else               sonarVictoria();

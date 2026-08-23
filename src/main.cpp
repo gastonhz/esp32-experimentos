@@ -30,7 +30,7 @@
     juego_pelea.*     combate cuerpo a cuerpo, de dos a cuatro peleadores
     juego_western.*   Tiros: duelo a distancia con balas lentas y direccionales
     modo_ambiente.*   automata celular elemental (no es un juego)
-    pantallas.*       Highscores e IP (no son juegos, pero entran al selector)
+    pantallas.*       Highscores, IP y las tres letras del record (no son juegos)
     panel_web.*       AP WiFi + pagina de estado y tuneo
 
   Para agregar un juego: juego_x.h/.cpp con nuevoX/loopX/lcdX/webX, el #include
@@ -111,7 +111,17 @@ void iniciarJuego(uint8_t j) {
   JUEGOS[j].nuevo();
 }
 
+// Antes del menu puede quedar una parada: si la partida que termina batio un
+// record, primero sale la pantallita de las tres letras para firmarlo. Se
+// engancha aca y no en cada juego para que los doce sigan sin enterarse: todos
+// terminan llamando a volverAlMenu().
 void volverAlMenu() {
+  if (recordPendiente() >= 0) {
+    pantalla = NOMBRE;
+    FastLED.clear(true);
+    nuevoNombre();
+    return;
+  }
   pantalla = MENU;
   lcdForzarRefresh();
   FastLED.clear(true);
@@ -154,7 +164,10 @@ static void chequearReset() {
   bool r = (digitalRead(RESET_PIN) == LOW);   // apretado = LOW
   if (r && !resetPrev) {
     beep(600, 80);
-    if (pantalla == JUEGO) volverAlMenu();
+    // Desde la pantalla de las tres letras el reset es "no quiero firmar": el
+    // record ya quedo grabado, lo unico que se pierde son las iniciales.
+    if (pantalla == NOMBRE) cancelarNombreRecord();
+    if (pantalla != MENU)   volverAlMenu();
   }
   resetPrev = r;
 }
@@ -200,12 +213,14 @@ void loop() {
   actualizarBotones();
   actualizarJoysticks();   // una ronda del barrido de los ocho ejes
 
-  if (pantalla == MENU) loopMenu();
-  else                  JUEGOS[juegoActivo].loop();
+  if      (pantalla == MENU)   loopMenu();
+  else if (pantalla == NOMBRE) loopNombre();
+  else                         JUEGOS[juegoActivo].loop();
 
   actualizarBuzzer();
 
   // El LCD se repinta ultimo y solo escribe las filas que cambiaron.
-  if (pantalla == MENU) lcdMenu();
-  else                  JUEGOS[juegoActivo].lcd();
+  if      (pantalla == MENU)   lcdMenu();
+  else if (pantalla == NOMBRE) lcdNombre();
+  else                         JUEGOS[juegoActivo].lcd();
 }

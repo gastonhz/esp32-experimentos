@@ -135,6 +135,7 @@ static void perder() {
   for (uint8_t p = 0; p < RC_MAX_PROYECTILES; p++) proyActivo[p] = false;
   estadoRc = RC_FIN;
   finDesde = millis();
+  // El puntaje es del equipo entero, no de un jugador: lo firma el Verde.
   esRecord = intentarRecord(REC_RC, score);
   esRecord ? sonarRecord() : sonarGameOver();
 }

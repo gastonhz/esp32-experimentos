@@ -60,6 +60,7 @@ static float    vel[NUM_CONTROLES];       // LEDs/s, nunca negativa: los autos n
 static uint8_t  vueltas[NUM_CONTROLES];
 static uint32_t vueltaDesde[NUM_CONTROLES];  // millis() en que empezo la vuelta en curso
 static uint32_t mejorVuelta;     // la mejor de la carrera, en ms (0 = ninguna cerrada)
+static uint8_t  mejorVueltaDe;   // quien la hizo: el record es suyo aunque gane otro
 static uint8_t  vueltasMeta;
 static uint8_t  ganador;         // indice de control, valido en CAR_FIN
 static bool     esRecord;
@@ -144,10 +145,11 @@ static void arrancarCarrera() {
     vueltas[i]     = 0;
     vueltaDesde[i] = 0;
   }
-  mejorVuelta  = 0;
-  ganador      = 0;
-  esRecord     = false;
-  ultimoTiempo = 0;
+  mejorVuelta   = 0;
+  mejorVueltaDe = 0;
+  ganador       = 0;
+  esRecord      = false;
+  ultimoTiempo  = 0;
   generarPista();
   estadoCar = CAR_LARGADA;
   faseDesde = millis();
@@ -230,13 +232,13 @@ static void avanzar(uint8_t i, float dt, uint32_t ahora) {
 
     uint32_t t = ahora - vueltaDesde[i];
     vueltaDesde[i] = ahora;
-    if (mejorVuelta == 0 || t < mejorVuelta) mejorVuelta = t;
+    if (mejorVuelta == 0 || t < mejorVuelta) { mejorVuelta = t; mejorVueltaDe = i; }
 
     if (vueltas[i] >= vueltasMeta) {
       ganador   = i;
       estadoCar = CAR_FIN;
       faseDesde = ahora;
-      esRecord  = intentarRecord(REC_CARRERA, mejorVuelta);
+      esRecord  = intentarRecord(REC_CARRERA, mejorVuelta, mejorVueltaDe);
       esRecord ? sonarRecord() : sonarMeta();
       return;
     }

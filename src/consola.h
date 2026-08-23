@@ -145,10 +145,14 @@ void actualizarJoysticks();
 float leerJoyNorm(uint8_t jugador);   // eje de la tira (el de toda la vida)
 float leerJoyCruz(uint8_t jugador);   // eje transversal, todavia sin usar
 
-// El eje de la tira en pasos discretos (-1/0/+1) con auto-repeat, para navegar
-// menus. Usa una zona muerta mas ancha que leerJoyNorm: elegir en una lista no
-// necesita precision, y asi el menu no se mueve solo.
-int8_t joystickPaso(uint8_t jugador);
+// Un eje en pasos discretos (-1/0/+1) con auto-repeat, para navegar menus. Usa
+// una zona muerta mas ancha que leerJoyNorm: elegir en una lista no necesita
+// precision, y asi el menu no se mueve solo. El auto-repeat lleva estado propio
+// por control Y por eje, asi que los dos ejes se pueden usar a la vez (la
+// pantalla de las tres letras del record mueve el cursor con uno y cambia la
+// letra con el otro).
+int8_t joystickPasoEje(uint8_t jugador, uint8_t eje);
+int8_t joystickPaso(uint8_t jugador);   // el transversal, que es el de los menus
 
 // El centro real de un joystick barato no cae exacto en 2048 y el desvio puede
 // superar la zona muerta (se siente como que el personaje "cae" solo). Por eso
@@ -246,11 +250,32 @@ extern const RecordDef RECORDS[];
 extern uint32_t hsValor[NUM_RECORDS];
 
 void   iniciarRecords();
-bool   intentarRecord(uint8_t rec, uint32_t valor);   // true si quedo grabado
+// El `jugador` es el control al que le pertenece el record: el que lo hizo, o el
+// que gano la partida cuando el numero es de todos (los golpes de un peloteo de
+// Pong los ponen los dos). Es quien despues firma con su propio control, asi que
+// los juegos de un solo jugador lo dejan en el 0, que es el Verde de siempre.
+bool   intentarRecord(uint8_t rec, uint32_t valor, uint8_t jugador = 0);   // true si quedo grabado
 String textoRecord(uint8_t rec);                      // "12 golpes" / "---"
 
+// ---------- Iniciales del que puso el record ----------
+// Tres letras, como en los fichines. Se guardan al lado del valor, con la misma
+// clave y una "N" al final ("hsPong" -> "hsPongN"), asi los records que ya
+// estaban grabados en la flash siguen intactos y arrancan sin nombre.
+#define LARGO_NOMBRE 3
+extern char hsNombre[NUM_RECORDS][LARGO_NOMBRE + 1];   // "" si todavia no tiene
+
+// Record recien batido al que le falta ponerle el nombre, o -1 si no hay
+// ninguno. Lo deja armado intentarRecord() y lo consume la pantalla de las tres
+// letras, que volverAlMenu() intercala antes del menu (ver pantallas.cpp).
+int8_t  recordPendiente();
+uint8_t jugadorPendiente();     // que control lo hizo, y por lo tanto lo firma
+void   ponerNombreRecord(uint8_t rec, const char* nombre);  // graba y cierra el pendiente
+void   cancelarNombreRecord();        // se va sin iniciales: el valor ya quedo grabado
+
 // ---------- Pantallas y juegos ----------
-enum Pantalla { MENU, JUEGO };
+// NOMBRE es la pantallita de las tres letras: no es un juego ni una entrada del
+// selector, se cuela sola entre el fin de una partida con record y el menu.
+enum Pantalla { MENU, JUEGO, NOMBRE };
 extern Pantalla pantalla;
 
 // Cada entrada del selector es una fila de esta tabla (definida en main.cpp).

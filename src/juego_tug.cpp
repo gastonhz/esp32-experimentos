@@ -24,7 +24,7 @@ static void terminar(uint8_t quien) {
   ganador   = quien;
   estadoTug = TUG_FIN;
   finDesde  = millis();
-  esRecord  = intentarRecord(REC_TUG, empujones);
+  esRecord  = intentarRecord(REC_TUG, empujones, quien - 1);
   esRecord ? sonarRecord() : sonarVictoria();
 }
 
