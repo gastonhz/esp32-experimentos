@@ -80,21 +80,22 @@
 // nombre canonico de cada juego: el LCD, la web y los records salen todos de
 // aca (o de RECORDS[], que usa los mismos textos).
 const JuegoDef JUEGOS[] = {
-  { "Pong",         nuevoPong,          loopPong,          lcdPong,          webPong          },
-  { "Tira y Afloja", nuevoTug,           loopTug,           lcdTug,           webTug           },
-  { "Rompecolores", nuevoRompecolores,  loopRompecolores,  lcdRompecolores,  webRompecolores  },
-  { "Twang",        nuevoTwang,         loopTwang,         lcdTwang,         webTwang         },
-  { "Paddle",       nuevoPaddle,        loopPaddle,        lcdPaddle,        webPaddle        },
-  { "Stacker",      nuevoStacker,       loopStacker,       lcdStacker,       webStacker       },
-  { "Salta Muros",  nuevoEsquiva,       loopEsquiva,       lcdEsquiva,       webEsquiva       },
-  { "Alunizaje",    nuevoLander,        loopLander,        lcdLander,        webLander        },
-  { "Reaccion",     nuevoDuelo,         loopDuelo,         lcdDuelo,         webDuelo         },
-  { "Carrera",      nuevoCarrera,       loopCarrera,       lcdCarrera,       webCarrera       },
-  { "Pelea",        nuevoPelea,         loopPelea,         lcdPelea,         webPelea         },
-  { "Tiros",        nuevoWestern,       loopWestern,       lcdWestern,       webWestern       },
-  { "Ambiente",     nuevoAmbiente,      loopAmbiente,      lcdAmbiente,      webAmbiente      },
-  { "Highscores",   nuevoHighscores,    loopHighscores,    lcdHighscores,    webHighscores    },
-  { "Ajustes",      nuevoAjustes,       loopAjustes,       lcdAjustes,       webAjustes       },
+//   nombre           nuevo              loop              lcd              web              esPantalla
+  { "Pong",          nuevoPong,         loopPong,         lcdPong,         webPong,         false },
+  { "Tira y Afloja", nuevoTug,          loopTug,          lcdTug,          webTug,          false },
+  { "Rompecolores",  nuevoRompecolores, loopRompecolores, lcdRompecolores, webRompecolores, false },
+  { "Twang",         nuevoTwang,        loopTwang,        lcdTwang,        webTwang,        false },
+  { "Paddle",        nuevoPaddle,       loopPaddle,       lcdPaddle,       webPaddle,       false },
+  { "Stacker",       nuevoStacker,      loopStacker,      lcdStacker,      webStacker,      false },
+  { "Salta Muros",   nuevoEsquiva,      loopEsquiva,      lcdEsquiva,      webEsquiva,      false },
+  { "Alunizaje",     nuevoLander,       loopLander,       lcdLander,       webLander,       false },
+  { "Reaccion",      nuevoDuelo,        loopDuelo,        lcdDuelo,        webDuelo,        false },
+  { "Carrera",       nuevoCarrera,      loopCarrera,      lcdCarrera,      webCarrera,      false },
+  { "Pelea",         nuevoPelea,        loopPelea,        lcdPelea,        webPelea,        false },
+  { "Tiros",         nuevoWestern,      loopWestern,      lcdWestern,      webWestern,      false },
+  { "Ambiente",      nuevoAmbiente,     loopAmbiente,     lcdAmbiente,     webAmbiente,     true  },
+  { "Highscores",    nuevoHighscores,   loopHighscores,   lcdHighscores,   webHighscores,   true  },
+  { "Ajustes",       nuevoAjustes,      loopAjustes,      lcdAjustes,      webAjustes,      true  },
 };
 static_assert(sizeof(JUEGOS) / sizeof(JUEGOS[0]) == NUM_JUEGOS,
               "JUEGOS[] y el enum Juego quedaron desincronizados");
@@ -104,7 +105,10 @@ uint8_t  juegoSel    = 0;             // indice resaltado en el menu
 uint8_t  juegoActivo = JUEGO_PONG;    // juego que se esta jugando
 
 // ---------- Selector ----------
+static void olvidarAtras();       // definida abajo, con el resto del boton atras
+
 void iniciarJuego(uint8_t j) {
+  olvidarAtras();                 // que un mantenido de antes no salga del juego recien abierto
   juegoActivo = j;
   pantalla    = JUEGO;
   lcdForzarRefresh();
@@ -157,6 +161,67 @@ static void loopMenu() {
   fill_rainbow(leds, LARGO_TIRA, hue, 3);
   nscale8(leds, LARGO_TIRA, 40);   // bajar el brillo del atractor
   FastLED.show();
+}
+
+// ---------- Volver atras con el boton del stick ----------
+// El pulsador de reset esta en la consola, que es justo donde no estas cuando
+// querias salir de Ajustes sin levantarte del sillon. El boton del stick hace
+// lo mismo desde el control, y vale el de CUALQUIERA de los cuatro: sale el que
+// este mas cerca.
+//
+// Un toque alcanza en las entradas que no son partidas (Ambiente, Highscores,
+// Ajustes). Adentro de un juego hay que MANTENERLO cinco segundos: el que ya
+// perdio suele quedarse jugueteando con su control, y una salida de casualidad
+// le arruina la partida al resto. Cinco segundos no se sienten largos mientras
+// se vea la barra llenandose; sin barra, uno suelta antes de tiempo.
+static const uint16_t ATRAS_MS       = 5000;
+static const uint16_t ATRAS_AVISO_MS = 1000;   // antes de esto no se avisa nada
+
+static uint32_t atrasDesde[NUM_CONTROLES] = { 0 };   // millis() en que se apreto
+static bool     atrasUsado[NUM_CONTROLES] = { false };// ya salio con ESTE mantenido
+static uint16_t atrasProgreso = 0;                   // 0..100 del mantenido en curso
+
+static void olvidarAtras() {
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) { atrasDesde[j] = 0; atrasUsado[j] = false; }
+  atrasProgreso = 0;
+}
+
+static void chequearAtras() {
+  atrasProgreso = 0;
+  uint32_t ahora = millis();
+
+  // Soltar limpia siempre, este donde este la consola: si no, un mantenido que
+  // arranco en una pantalla seguiria contando en la siguiente.
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!btnStickEstable[j])      { atrasDesde[j] = 0; atrasUsado[j] = false; }
+    else if (atrasDesde[j] == 0)  { atrasDesde[j] = ahora; }
+  }
+
+  // En el menu no hay atras, y en la pantalla de las tres letras el boton del
+  // stick ya significa otra cosa (volver una letra).
+  if (pantalla != JUEGO) return;
+
+  if (JUEGOS[juegoActivo].esPantalla) {
+    for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+      if (btnStickFlanco[j]) { beep(600, 80); volverAlMenu(); return; }
+    }
+    return;
+  }
+
+  for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
+    if (!btnStickEstable[j] || atrasUsado[j]) continue;
+    uint32_t t = ahora - atrasDesde[j];
+    if (t >= ATRAS_MS) {
+      atrasUsado[j] = true;        // no vuelve a disparar hasta que lo suelten
+      beep(600, 80);
+      volverAlMenu();
+      return;
+    }
+    if (t > ATRAS_AVISO_MS) {
+      uint16_t p = (uint16_t)((t * 100) / ATRAS_MS);
+      if (p > atrasProgreso) atrasProgreso = p;
+    }
+  }
 }
 
 // Reset con el pulsador viejo (flanco de bajada): desde un juego vuelve al menu.
@@ -215,8 +280,14 @@ void setup() {
 }
 
 void loop() {
+  // Mientras se sube un firmware la consola no juega ni lee controles: escribir
+  // flash bloquea de a ratos, y ademas conviene que la tira y el LCD esten
+  // contando el progreso y no dibujando una partida que nadie esta mirando.
+  if (otaActiva()) { loopOTA(); return; }
+
   chequearReset();
   actualizarBotones();
+  chequearAtras();         // necesita los botones ya leidos de este frame
   actualizarJoysticks();   // una ronda del barrido de los ocho ejes
 
   if      (pantalla == MENU)   loopMenu();
@@ -229,4 +300,8 @@ void loop() {
   if      (pantalla == MENU)   lcdMenu();
   else if (pantalla == NOMBRE) lcdNombre();
   else                         JUEGOS[juegoActivo].lcd();
+
+  // Va DESPUES de que el juego dibuje lo suyo, porque le pisa la fila de abajo.
+  // No cuesta nada: lcdLinea solo escribe al display cuando el texto cambio.
+  if (atrasProgreso) lcdLinea(1, "Saliendo " + barraLCD(atrasProgreso, 100, 7));
 }

@@ -344,6 +344,12 @@ struct JuegoDef {
   void   (*loop)();         // un frame
   void   (*lcd)();          // que mostrar en el 1602 mientras esta activo
   String (*web)();          // linea de estado para el panel web
+  // Las entradas que no son partidas (Ambiente, Highscores, Ajustes) se salen
+  // con un toque del boton del stick; de un juego hay que mantenerlo cinco
+  // segundos. Se marca aca y no adivinando por el indice --los que no son
+  // juegos estan al final de la tabla-- porque eso se rompe solo el dia que
+  // alguien agregue un juego al final.
+  bool        esPantalla;
 };
 
 enum Juego { JUEGO_PONG, JUEGO_TUG, JUEGO_ROMPECOLORES, JUEGO_TWANG,

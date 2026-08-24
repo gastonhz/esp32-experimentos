@@ -8,6 +8,8 @@
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
 
 #include "juego_pong.h"
 #include "juego_tug.h"
@@ -24,6 +26,27 @@
 
 String apIP;
 static AsyncWebServer server(80);
+
+// ---------- Estado de la actualizacion de firmware ----------
+// Lo escribe la tarea del servidor (el upload llega por eventos de AsyncTCP) y
+// lo lee el loop(): por eso volatile. Son todos de 32 bits alineados, que en el
+// ESP32 se leen y escriben de una sola vez.
+static volatile bool     otaEnCurso   = false;
+static volatile bool     otaError     = false;
+static volatile uint32_t otaRecibido  = 0;
+static volatile uint32_t otaTotal     = 0;
+static uint32_t          otaReinicioEn = 0;   // millis() en que hay que reiniciar (0 = no)
+static uint32_t          otaErrorHasta = 0;   // hasta cuando se muestra el cartel de error
+
+// Por que fallo, en texto, para la pagina y el monitor serie. Buffer fijo y no
+// String porque lo escribe la tarea del servidor y lo lee otra.
+static char otaMsg[64] = "";
+static void otaFalla(const char* msg) {
+  snprintf(otaMsg, sizeof(otaMsg), "%s", msg);
+  Serial.printf("[OTA] FALLO: %s\n", otaMsg);
+}
+
+bool otaActiva() { return otaEnCurso; }
 
 // ---------- Tabla de parametros tuneables ----------
 // Todos son uint16_t para poder apuntarlos desde una sola tabla; los rangos
@@ -202,6 +225,24 @@ static String paginaHtml() {
   }
   h += "<p><input type=\"submit\" value=\"Aplicar\"></p></form>";
 
+  // --- Actualizacion de firmware ---
+  // La fecha de compilacion es la unica forma de confirmar de un vistazo que la
+  // actualizacion entro: el numero de version se olvida de subir, la fecha no.
+  // La fecha dice QUE version corre; la particion dice si el OTA realmente
+  // cambio de ranura. Despues de una actualizacion exitosa esto pasa de app0 a
+  // app1 (o al reves): es la prueba de que no se reinicio y siguio con la vieja.
+  const esp_partition_t* corriendo = esp_ota_get_running_partition();
+  h += "<h2>Firmware</h2>";
+  h += "<p><small>Compilado el " __DATE__ " a las " __TIME__ " &middot; corriendo en <b>";
+  h += String(corriendo ? corriendo->label : "?") + "</b></small></p>";
+  h += "<form method=\"POST\" action=\"/actualizar\" enctype=\"multipart/form-data\">";
+  h += "<input type=\"file\" name=\"firmware\" accept=\".bin\"> ";
+  h += "<input type=\"submit\" value=\"Actualizar\">";
+  h += "<p><small>Subi el <code>firmware.bin</code> que deja PlatformIO en "
+       "<code>.pio/build/nodemcu-32s/</code>. Se escribe en la particion que no "
+       "esta corriendo, asi que si algo falla la consola sigue arrancando con "
+       "esta misma version.</small></p></form>";
+
   // Refresco del estado sin recargar la pagina. Antes esto era un
   // <meta http-equiv="refresh" content="3">, que era mas simple pero hacia
   // inusable el formulario: cada 3 segundos el navegador recargaba entero y se
@@ -227,12 +268,25 @@ void iniciarPanelWeb() {
   WiFi.softAP(AP_SSID, AP_PASS);
   apIP = WiFi.softAPIP().toString();
 
+  // Sin ahorro de energia en la radio: son unos mA mas, pero le saca latencia
+  // y variabilidad a la conexion, que es justo lo que necesita una subida de
+  // casi un mega que no se puede permitir una pausa larga.
+  WiFi.setSleep(false);
+
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send(200, "text/html", paginaHtml());
   });
 
   // Solo el fragmento que cambia solo: lo pide el script cada 3 s.
   server.on("/estado", HTTP_GET, [](AsyncWebServerRequest* request) {
+    // La pagina pide esto cada 3 s, y la subida del firmware sale de esa misma
+    // pagina: durante una actualizacion, cada refresco abre otra conexion y
+    // arma un bloque de HTML de varios KB en la MISMA tarea que esta
+    // escribiendo flash. Mientras dura el OTA se contesta con una linea.
+    if (otaActiva()) {
+      request->send(200, "text/html", "<p>Actualizando firmware...</p>");
+      return;
+    }
     request->send(200, "text/html", bloqueVivo());
   });
 
@@ -276,5 +330,157 @@ void iniciarPanelWeb() {
     request->redirect("/");                   // vuelve al formulario ya con los valores nuevos
   });
 
+  // Actualizacion de firmware. El primer lambda se llama cuando termino de
+  // subir TODO; el segundo, por cada pedazo que va llegando.
+  server.on("/actualizar", HTTP_POST,
+    [](AsyncWebServerRequest* request) {
+      // Lo primero de todo: que llego. Si el Content-Type no arranca con
+      // "multipart/form-data", la libreria NO parsea el cuerpo como archivo y
+      // el callback de subida no corre nunca, por mas que el POST haya llegado.
+      Serial.printf("[OTA] POST /actualizar  tipo=\"%s\"  largo=%u  params=%u  subida=%d\n",
+                    request->contentType().c_str(), (unsigned)request->contentLength(),
+                    (unsigned)request->params(), (int)otaEnCurso);
+
+      bool ok = otaEnCurso && !otaError && !Update.hasError();
+
+      // Si el callback de subida no corrio ni una vez, el problema no es el
+      // firmware: no llego el archivo. Distinguirlo ahorra media hora de
+      // buscar del lado equivocado.
+      if (!ok && !otaEnCurso) otaFalla("no llego ningun archivo al servidor");
+      if (!ok && otaMsg[0] == '\0') otaFalla(Update.errorString());
+
+      Serial.printf("[OTA] fin: ok=%d recibido=%u de %u\n",
+                    (int)ok, (unsigned)otaRecibido, (unsigned)otaTotal);
+
+      String pagina = ok
+        ? "<h1>Firmware actualizado</h1><p>La consola se esta reiniciando. "
+          "Volve al panel en unos segundos.</p>"
+        : "<h1>Fallo la actualizacion</h1><p>La consola sigue con el firmware "
+          "anterior.</p><p><b>Motivo:</b> " + String(otaMsg) + "</p>"
+          "<p>Recibidos " + String(otaRecibido) + " de " + String(otaTotal) + " bytes.</p>";
+      AsyncWebServerResponse* res = request->beginResponse(200, "text/html", pagina);
+      res->addHeader("Connection", "close");
+      request->send(res);
+
+      // Reiniciar aca mismo cortaria la respuesta antes de que salga: se agenda
+      // y lo hace el loop(), que ademas ya no esta corriendo ningun juego.
+      if (ok) otaReinicioEn = millis() + 800;
+      else    otaErrorHasta = millis() + 4000;
+    },
+    [](AsyncWebServerRequest* request, const String& filename, size_t index,
+       uint8_t* data, size_t len, bool final) {
+      if (index == 0) {
+        // OJO CON EL ORDEN: otaEnCurso va ULTIMO. Es la bandera que habilita a
+        // loopOTA(), que corre en la tarea del loop() y en el otro nucleo, y
+        // que lee todo lo demas para dibujar el progreso. Publicarla primero
+        // deja una ventana en la que el otro nucleo entra a mirar valores que
+        // todavia no se escribieron.
+        otaError    = false;
+        otaRecibido = 0;
+        otaTotal    = request->contentLength();
+        otaMsg[0]   = '\0';
+        otaEnCurso  = true;
+
+        Serial.printf("[OTA] primer bloque: archivo=\"%s\" len=%u byte0=0x%02X "
+                      "contentLength=%u heap=%u\n",
+                      filename.c_str(), (unsigned)len, (len > 0) ? data[0] : 0,
+                      (unsigned)otaTotal, (unsigned)ESP.getFreeHeap());
+
+        // Un firmware de ESP32 siempre arranca con 0xE9. Sin este chequeo,
+        // subir cualquier otro archivo por error borra igual la particion.
+        if (len < 1 || data[0] != 0xE9) {
+          otaError = true;
+          otaFalla("el archivo no arranca con 0xE9: no es un firmware");
+          return;
+        }
+        // Por las dudas de que haya quedado a medias un intento anterior: con
+        // una actualizacion "corriendo", begin() devuelve false y no dice por que.
+        if (Update.isRunning()) Update.abort();
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+          otaError = true;
+          otaFalla(Update.errorString());
+          return;
+        }
+      }
+      if (otaError) return;
+
+      if (Update.write(data, len) != len) {
+        otaError = true;
+        otaFalla(Update.errorString());
+        return;
+      }
+      otaRecibido += len;
+      if (final) {
+        Serial.printf("[OTA] ultimo bloque: %u bytes escritos\n", (unsigned)otaRecibido);
+        if (!Update.end(true)) { otaError = true; otaFalla(Update.errorString()); }
+      }
+    });
+
   server.begin();
+}
+
+// ---------- Pantalla de la actualizacion ----------
+// La tira hace de barra de progreso y el LCD lleva el porcentaje. Se repinta a
+// ~10 fps y no en cada pasada: mientras esto dibuja, la otra tarea esta
+// escribiendo flash, y no tiene sentido pelearle el bus por cuadros que nadie
+// va a ver. Un pixel glitcheado aca no es grave; colgarse, si.
+void loopOTA() {
+  actualizarBuzzer();          // deja terminar lo que estuviera sonando
+
+  if (otaReinicioEn && millis() >= otaReinicioEn) ESP.restart();
+
+  // El cartel de error se muestra un rato y despues la consola sigue viviendo.
+  if (otaError && otaErrorHasta && millis() >= otaErrorHasta) {
+    otaEnCurso = otaError = false;
+    otaErrorHasta = 0;
+    volverAlMenu();
+    return;
+  }
+
+  // SIN VENCIMIENTO POR AHORA.
+  //
+  // Habia aca una red de seguridad que abortaba la subida despues de 15 s sin
+  // recibir datos, para que una conexion cortada no dejara la consola colgada
+  // en la barra de progreso. Se disparaba a los pocos milisegundos de empezar,
+  // matando transferencias que iban bien, y no se pudo explicar por que. Queda
+  // afuera hasta entenderlo: una consola colgada en una barra se destraba
+  // apretando reset, una actualizacion que nunca puede completarse no.
+
+  // El total incluye el sobre del multipart, unos cientos de bytes sobre casi
+  // un mega: alcanza y sobra para una barra.
+  uint8_t pct = (otaTotal > 0) ? (uint8_t)((otaRecibido * 100) / otaTotal) : 0;
+  if (pct > 100) pct = 100;
+
+  // Se repinta solo cuando cambia el tramo de 5%, o sea unas veinte veces en
+  // toda la subida. Antes era cada 100 ms, y mientras la otra tarea escribe
+  // flash, cada FastLED.show() y cada linea al LCD --que va por I2C a 100 kHz
+  // con esperas bloqueantes-- es tiempo que el servidor no tiene para mandar
+  // los ACK. Si no llega a tiempo, AsyncTCP cierra la conexion: la subida se
+  // corta justo como se corto.
+  static uint8_t ultimoTramo = 255;
+  uint8_t tramo = otaError ? 200 : (pct / 5);
+  if (tramo == ultimoTramo) return;
+  ultimoTramo = tramo;
+
+  if (!otaError && (pct % 10) == 0) {
+    Serial.printf("[OTA] %u%%  (%u de %u bytes)\n",
+                  (unsigned)pct, (unsigned)otaRecibido, (unsigned)otaTotal);
+  }
+
+  // Con error se prende la tira ENTERA de rojo y no la barra: si el archivo se
+  // rechazo en el primer byte, la barra estaria en cero y no se veria nada.
+  FastLED.clear();
+  int16_t hasta = otaError ? (int16_t)LARGO_TIRA
+                           : (int16_t)(((int32_t)LARGO_TIRA * pct) / 100);
+  CRGB c = otaError ? CRGB(255, 0, 0) : CRGB(0, 120, 255);
+  for (int16_t i = 0; i < hasta; i++) setLed(i, c);
+  FastLED.show();
+
+  if (otaError) {
+    lcdLinea(0, "Fallo la carga");
+    lcdLinea(1, "Firmware intacto");   // el que corre es el de siempre
+  } else {
+    lcdLinea(0, "Firmware " + String(pct) + "%");   // "Actualizando 100%" son 17 columnas
+    lcdLinea(1, barraLCD(pct, 100, 16));
+  }
 }

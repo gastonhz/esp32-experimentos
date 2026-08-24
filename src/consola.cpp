@@ -667,10 +667,18 @@ static String claveNombre(uint8_t rec) { return claveValor(rec) + "N"; }
 // Trae de la NVS el valor y las iniciales de UN record, los del largo actual.
 static void cargarRecord(uint8_t i) {
   hsValor[i] = prefs.getUInt(claveValor(i).c_str(), 0);
-  // getString no toca el buffer si la clave no existe (los records viejos, de
-  // antes de que hubiera nombres), asi que hay que vaciarlo antes.
+
+  // Un record sin firmar no tiene clave de nombre, que es lo normal hasta que
+  // alguien lo bate. Se pregunta con isKey() antes de leerlo por dos razones:
+  // getString no toca el buffer si la clave falta --habria que vaciarlo igual--
+  // y ademas loguea a nivel ERROR, llenando el monitor serie en cada arranque
+  // con una linea por cada record sin firmar. Ruido de error que no es error
+  // termina en errores de verdad que nadie mira.
   hsNombre[i][0] = '\0';
-  prefs.getString(claveNombre(i).c_str(), hsNombre[i], sizeof(hsNombre[i]));
+  String claveN = claveNombre(i);
+  if (prefs.isKey(claveN.c_str())) {
+    prefs.getString(claveN.c_str(), hsNombre[i], sizeof(hsNombre[i]));
+  }
 }
 
 void recargarRecords() {
