@@ -1,9 +1,9 @@
 // ---------- Rompecolores: contra el muro de colores ----------
-// El muro es una FILA contigua que ocupa [rcFrente, NUM_LEDS-1]: los colores
-// nuevos entran por el extremo lejano (NUM_LEDS-1) y empujan a los viejos hacia
+// El muro es una FILA contigua que ocupa [rcFrente, LARGO_TIRA-1]: los colores
+// nuevos entran por el extremo lejano (LARGO_TIRA-1) y empujan a los viejos hacia
 // el jugador, como una cinta transportadora. Por eso el frente (rcFrente) es
 // siempre el color mas VIEJO: se lo ve venir desde lejos y se puede tener la
-// bala del color correcto lista. rcFrente == NUM_LEDS significa "muro vacio"
+// bala del color correcto lista. rcFrente == LARGO_TIRA significa "muro vacio"
 // (asi arranca la partida y asi queda si se rompe el ultimo LED).
 // La base ocupa [RC_BASE, RC_BASE + baseLeds - 1]; si el muro llega ahi se
 // pierde. random() en este core usa el RNG por hardware, no hace falta semilla.
@@ -31,7 +31,14 @@ uint16_t       RC_VEL_RAPIDA = 320;   // avance mas rapido del muro, pote al max
 uint16_t       RC_PROY_VEL   = 12;    // velocidad del proyectil (ms por LED)
 const uint16_t RC_VEL_MINIMA = 110;   // piso de dificultad: mas rapido que esto no acelera
 const uint8_t  RC_PUNTOS_SUBE = 5;    // cada cuantos puntos se acorta el intervalo de avance
-const uint8_t  RC_MAX_PROYECTILES = 5;// balas simultaneas en vuelo: con ESTELA=2 cada una ocupa 3 LEDs,
+// Rompecolores es de los juegos ABSOLUTOS: el muro baja a la misma velocidad y
+// las balas vuelan igual, asi que la tira larga da el doble de distancia y el
+// doble de tiempo (y por eso su record se guarda por largo de tira).
+//
+// Con el doble de recorrido hay el doble de balas en el aire a la vez, o el
+// ritmo de tiro se estrangularia: el array se dimensiona para la tira larga y
+// el tope real sale de topeProyectiles().
+const uint8_t  RC_MAX_PROYECTILES = 10;// balas simultaneas en vuelo: con ESTELA=2 cada una ocupa 3 LEDs,
                                       // mas que esto en una tira de 100 se vuelve un choclo ilegible
 const uint8_t  RC_BASE       = 0;     // primer LED de la base (muestra el color cargado)
 const uint8_t  RC_BASE_LEDS  = 2;     // ancho de la base en LEDs: mas visible que uno solo
@@ -60,8 +67,8 @@ enum EstadoRc { RC_ELIGIENDO, RC_JUGANDO, RC_FIN };
 static EstadoRc estadoRc;
 static uint8_t  modo;                   // ModoRc elegido en la pantalla previa
 static uint8_t  baseLeds;               // ancho de la base: 2 con un control, 4 con cuatro
-static int16_t  frente;                 // LED del muro mas cercano al jugador; NUM_LEDS = muro vacio
-static CRGB     muro[NUM_LEDS];         // color de cada LED del muro (solo importa en [frente, NUM_LEDS-1])
+static int16_t  frente;                 // LED del muro mas cercano al jugador; LARGO_TIRA = muro vacio
+static CRGB     muro[LEDS_MAX];         // color de cada LED del muro (solo importa en [frente, LARGO_TIRA-1])
 static uint16_t score;                  // LEDs rotos
 static uint16_t velAvance;              // intervalo actual de avance del muro (ms por LED)
 static uint32_t ultimoAvance;           // millis() del ultimo avance del muro
@@ -98,8 +105,8 @@ void nuevoRompecolores() {
 // al entrar al juego: asi la dificultad es la que marca la perilla en el momento
 // de empezar a jugar, no la que marcaba mientras se elegia el modo.
 static void arrancarPartida() {
-  frente = NUM_LEDS;              // sin muro al empezar
-  for (int16_t i = 0; i < NUM_LEDS; i++) muro[i] = CRGB::Black;
+  frente = LARGO_TIRA;              // sin muro al empezar
+  for (int16_t i = 0; i < LARGO_TIRA; i++) muro[i] = CRGB::Black;
   score        = 0;
   velAvance    = map(leerPoteCrudo(), 0, 4095, RC_VEL_LENTA, RC_VEL_RAPIDA);
   ultimoAvance = millis();
@@ -119,8 +126,10 @@ static void arrancarPartida() {
 // Mete una bala del color pedido, si queda algun slot libre. Se puede disparar
 // sin esperar al impacto de la anterior; si estan los RC_MAX_PROYECTILES en
 // vuelo el disparo se pierde y listo.
+static uint8_t topeProyectiles() { return (uint8_t)escalaLeds(5); }
+
 static void disparar(uint8_t colorIdx) {
-  for (uint8_t p = 0; p < RC_MAX_PROYECTILES; p++) {
+  for (uint8_t p = 0; p < topeProyectiles(); p++) {
     if (proyActivo[p]) continue;
     proyActivo[p] = true;
     proyColor[p]  = colorIdx;
@@ -188,7 +197,7 @@ void loopRompecolores() {
     bool    on = (t / 130) % 2 == 0;
     int16_t comido = t / 30;                  // el muro ya paso por ahi
     FastLED.clear();
-    for (int16_t i = comido; i < NUM_LEDS; i++) setLed(i, on ? RC_ROJO : CRGB(40, 0, 0));
+    for (int16_t i = comido; i < LARGO_TIRA; i++) setLed(i, on ? RC_ROJO : CRGB(40, 0, 0));
     if (esRecord) dibujarChispasRecord();
     FastLED.show();
     if (t > RC_FIN_MS) volverAlMenu();
@@ -216,8 +225,8 @@ void loopRompecolores() {
   if (millis() - ultimoAvance >= velAvance) {
     ultimoAvance += velAvance;
     frente--;
-    for (int16_t i = frente; i < NUM_LEDS - 1; i++) muro[i] = muro[i + 1];
-    muro[NUM_LEDS - 1] = RC_COLORES[(uint8_t)random(4)];
+    for (int16_t i = frente; i < LARGO_TIRA - 1; i++) muro[i] = muro[i + 1];
+    muro[LARGO_TIRA - 1] = RC_COLORES[(uint8_t)random(4)];
     if (frente < baseLeds) { perder(); return; }   // el muro toco la base
   }
 
@@ -229,7 +238,7 @@ void loopRompecolores() {
     if (millis() - proyPaso[p] >= RC_PROY_VEL) {
       proyPaso[p] += RC_PROY_VEL;
       proyPos[p]++;
-      if (proyPos[p] > NUM_LEDS - 1) proyActivo[p] = false;  // no habia muro: sin penalidad
+      if (proyPos[p] > LARGO_TIRA - 1) proyActivo[p] = false;  // no habia muro: sin penalidad
     }
   }
 
@@ -239,7 +248,7 @@ void loopRompecolores() {
   // primera (rompio o agrego), nunca contra el frente viejo.
   for (uint8_t p = 0; p < RC_MAX_PROYECTILES; p++) {
     if (!proyActivo[p]) continue;
-    if (frente >= NUM_LEDS || proyPos[p] < frente) continue;
+    if (frente >= LARGO_TIRA || proyPos[p] < frente) continue;
     if (muro[frente] == RC_COLORES[proyColor[p]]) acertar();
     else                                          fallar(proyColor[p]);
     proyActivo[p] = false;                          // el proyectil se consume igual
@@ -253,7 +262,7 @@ void loopRompecolores() {
   } else {
     for (uint8_t i = 0; i < 4; i++) setLed(RC_BASE + i, RC_COLORES[i]);
   }
-  for (int16_t i = frente; i < NUM_LEDS; i++) setLed(i, muro[i]);
+  for (int16_t i = frente; i < LARGO_TIRA; i++) setLed(i, muro[i]);
   for (uint8_t p = 0; p < RC_MAX_PROYECTILES; p++) {
     if (!proyActivo[p]) continue;
     setLed(proyPos[p], RC_COLORES[proyColor[p]]);
@@ -285,7 +294,7 @@ void lcdRompecolores() {
   // suya. Se muestra el color del frente del muro, que es el dato que importa.
   if (modo == RC_UN_CONTROL) {
     lcdLinea(1, "Bala: " + String(RC_NOMBRE_COLOR[colorCargado]));
-  } else if (frente < NUM_LEDS) {
+  } else if (frente < LARGO_TIRA) {
     uint8_t f = 0;
     for (uint8_t c = 0; c < 4; c++) if (muro[frente] == RC_COLORES[c]) f = c;
     lcdLinea(1, "Muro: " + String(RC_NOMBRE_COLOR[f]));

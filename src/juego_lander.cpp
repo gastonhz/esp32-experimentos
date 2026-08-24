@@ -19,6 +19,12 @@
 #include "juego_lander.h"
 
 // ---------- Parametros ----------
+// Juego PROPORCIONAL: lo que esta en LEDs, en LEDs/s o en ms por LED vale para
+// una tira de 100 y se pasa por escala*() al usarlo, asi en la tira larga todo
+// crece junto y la partida se siente igual. Los numeros de aca y los del panel
+// web siempre hablan de una tira de 100, este puesta la que este.
+// El combustible no escala: esta en ms y, como las aceleraciones tambien
+// crecen, bajar la tira larga entera lleva el mismo tiempo que bajar la corta.
 uint16_t LND_GRAVEDAD   = 26;   // LEDs/s^2 hacia la base
 uint16_t LND_EMPUJE     = 60;   // LEDs/s^2 del motor a fondo
 uint16_t LND_VEL_SEGURA = 14;   // maxima velocidad de contacto que se banca (LEDs/s)
@@ -71,14 +77,14 @@ static void nuevaPlataforma() {
   // imposible a ocupar la tira entera.
   int16_t largo = (int16_t)LND_PLAT_INI - (int16_t)aterrizajes;
   if (largo < LND_PLAT_MIN) largo = LND_PLAT_MIN;
-  platLargo = (uint8_t)largo;
+  platLargo = (uint8_t)escalaLeds(largo);       // el piso se cuenta en LEDs de tira corta
 
-  int16_t maxAlt = LND_PLAT_MAX_ALT;
-  if (maxAlt > NUM_LEDS - 1 - platLargo) maxAlt = NUM_LEDS - 1 - platLargo;
-  platIni = random(LND_PLAT_MIN_ALT, maxAlt + 1);
+  int16_t maxAlt = escalaLeds(LND_PLAT_MAX_ALT);
+  if (maxAlt > LARGO_TIRA - 1 - platLargo) maxAlt = LARGO_TIRA - 1 - platLargo;
+  platIni = random(escalaLeds(LND_PLAT_MIN_ALT), maxAlt + 1);
   platFin = platIni + platLargo - 1;
 
-  pos          = NUM_LEDS - 1;    // se entra en orbita, arriba de todo
+  pos          = LARGO_TIRA - 1;    // se entra en orbita, arriba de todo
   vel          = 0;
   empujeActual = 0;
   combustible  = LND_COMBUSTIBLE;
@@ -124,8 +130,8 @@ static void aterrizar() {
 // importante del juego y no cuesta ni una linea de LCD.
 static CRGB colorNave() {
   float caida = (vel < 0) ? -vel : 0;
-  if (caida <= LND_VEL_SEGURA)         return CRGB(  0, 255,  40);   // llegas bien
-  if (caida <= LND_VEL_SEGURA * 1.8f)  return CRGB(255, 170,   0);   // al limite
+  if (caida <= escalaVel(LND_VEL_SEGURA))        return CRGB(  0, 255,  40);   // llegas bien
+  if (caida <= escalaVel(LND_VEL_SEGURA) * 1.8f) return CRGB(255, 170,   0);   // al limite
   return CRGB(255, 0, 0);                                            // te estrellas
 }
 
@@ -151,7 +157,7 @@ void loopLander() {
   if (estadoLnd == LND_FIN) {
     // Derrota: la tira se apaga de arriba hacia abajo hasta el suelo.
     uint32_t t = ahora - faseDesde;
-    int16_t  techo = NUM_LEDS - 1 - (int16_t)(t / 28);
+    int16_t  techo = LARGO_TIRA - 1 - (int16_t)(t / 28);
     FastLED.clear();
     for (int16_t i = 0; i <= techo; i++) setLed(i, CRGB(50, 0, 0));
     if (esRecord) dibujarChispasRecord();
@@ -190,15 +196,15 @@ void loopLander() {
   float mando = leerJoyNorm(0);
   empujeActual = (mando > 0 && combustible > 0) ? mando : 0.0f;
   if (empujeActual > 0) {
-    vel += LND_EMPUJE * empujeActual * dt;
+    vel += escalaVel(LND_EMPUJE) * empujeActual * dt;
     combustible -= (int32_t)(empujeActual * dt * 1000.0f);
     if (combustible < 0) combustible = 0;
   }
-  vel -= LND_GRAVEDAD * dt;
+  vel -= escalaVel(LND_GRAVEDAD) * dt;
   pos += vel * dt;
 
-  if (pos > NUM_LEDS - 1) {         // techo: no se puede salir de la tira
-    pos = NUM_LEDS - 1;
+  if (pos > LARGO_TIRA - 1) {         // techo: no se puede salir de la tira
+    pos = LARGO_TIRA - 1;
     if (vel > 0) vel = 0;
   }
 
@@ -207,7 +213,7 @@ void loopLander() {
 
   if (vel <= 0) {                   // el contacto solo se evalua bajando
     if (nave >= platIni && nave <= platFin) {
-      if (caida <= LND_VEL_SEGURA) {
+      if (caida <= escalaVel(LND_VEL_SEGURA)) {
         pos = platIni;              // se apoya prolijo sobre la plataforma
         vel = 0;
         aterrizar();

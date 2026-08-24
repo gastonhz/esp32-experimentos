@@ -53,7 +53,14 @@ uint16_t ESQ_MURO_MAX      = 10;  // muro mas grueso (grosorMaximo() lo recorta
                                   // si no entrara dentro del salto largo)
 uint16_t ESQ_SALTO_ESPERA  = 350; // descanso despues de caer, antes de apuntar de nuevo
 
-const uint8_t  ESQ_MAX_MUROS   = 10;  // tope de muros vivos en la tira a la vez
+// Salta Muros es de los juegos ABSOLUTOS: los muros, los huecos y los saltos
+// miden lo mismo en las dos tiras, asi que la larga es literalmente el doble de
+// muros para saltar (y por eso su record se guarda por largo de tira).
+//
+// El array se dimensiona para la tira larga y el tope real sale de topeMuros():
+// con la corta siguen siendo los 10 de siempre, que es lo que entra en 100 LEDs.
+const uint8_t  ESQ_MAX_MUROS   = 20;  // tamano de los arrays: tope con la tira larga
+static uint8_t topeMuros() { return (uint8_t)escalaLeds(10); }
 const uint16_t ESQ_VEL_LENTA   = 130; // bajada mas lenta, pote al minimo (ms por LED)
 const uint16_t ESQ_VEL_RAPIDA  = 70;  // bajada mas rapida, pote al maximo (ms por LED)
 const uint16_t ESQ_VEL_MINIMA  = 32;  // piso de dificultad
@@ -66,7 +73,9 @@ const int16_t  ESQ_HUECO_PISO  = 2;
 // Techo del jugador y de la marca. Existe para que los muros nuevos, que entran
 // por la punta de la tira, JAMAS puedan aparecer encima suyo: seria una muerte
 // imposible de ver venir.
-const int16_t  ESQ_TECHO       = NUM_LEDS - 16;
+// Depende del largo de la tira, que ahora se elige en Ajustes: va como funcion
+// y no como constante de archivo, que se calcularia una sola vez al encender.
+static int16_t esqTecho() { return LARGO_TIRA - 16; }
 
 static const CRGB COL_MURO    = CRGB(255,  30,   0);
 static const CRGB COL_JUGADOR = CRGB(  0, 255,  80);
@@ -151,14 +160,14 @@ static bool colocarMuro(int16_t base) {
   if (hmax < hmin) hmax = hmin;
 
   int16_t ini = base + 1 + (int16_t)random(hmin, hmax + 1);
-  if (ini > NUM_LEDS - 1) return false;
+  if (ini > LARGO_TIRA - 1) return false;
 
   int16_t gmax = grosorMaximo();
   int16_t gmin = (int16_t)ESQ_MURO_MIN;
   if (gmin > gmax) gmin = gmax;
   if (gmin < 1)    gmin = 1;
 
-  for (uint8_t i = 0; i < ESQ_MAX_MUROS; i++) {
+  for (uint8_t i = 0; i < topeMuros(); i++) {
     if (muroVivo[i]) continue;
     muroVivo[i] = true;
     muroIni[i]  = ini;
@@ -173,7 +182,7 @@ static bool colocarMuro(int16_t base) {
 // sobre el jugador.
 static void generarMuro() {
   int16_t base = techoOcupado();
-  if (base < ESQ_TECHO) base = ESQ_TECHO;
+  if (base < esqTecho()) base = esqTecho();
   colocarMuro(base);
 }
 
@@ -196,7 +205,7 @@ void nuevoEsquiva() {
   // Se arranca con la tira ya poblada del tercio superior para arriba: el
   // jugador ve venir el patron entero y tiene unos segundos antes del primer
   // cruce, en vez de comerse un muro que aparecio a diez LEDs suyos.
-  int16_t base = NUM_LEDS / 3;
+  int16_t base = LARGO_TIRA / 3;
   while (colocarMuro(base)) base = techoOcupado();
 }
 
@@ -233,7 +242,7 @@ void loopEsquiva() {
   // Se camina siempre, tambien mientras se apunta: la punteria gruesa es esta.
   jugadorPos += leerJoyNorm(0) * ESQ_VEL_JUGADOR * dt;
   if (jugadorPos < 0)         jugadorPos = 0;
-  if (jugadorPos > ESQ_TECHO) jugadorPos = ESQ_TECHO;
+  if (jugadorPos > esqTecho()) jugadorPos = esqTecho();
   int16_t jugadorLed = (int16_t)(jugadorPos + 0.5f);
 
   // --- Apuntar y saltar ---
@@ -254,7 +263,7 @@ void loopEsquiva() {
     if (f > 1.0f) f = 1.0f;
 
     destino = jugadorLed + dmin + (int16_t)((dmax - dmin) * f + 0.5f);
-    if (destino > ESQ_TECHO) destino = ESQ_TECHO;
+    if (destino > esqTecho()) destino = esqTecho();
 
     if (!btnEstable[0]) {                    // solto: aparece en la marca
       jugadorPos = destino;

@@ -19,7 +19,14 @@ const uint16_t TWANG_VEL_LENTA    = 300;  // enemigos mas lentos, pote al minimo
 const uint16_t TWANG_VEL_RAPIDA   = 120;  // enemigos mas rapidos, pote al maximo (ms por LED)
 const uint16_t TWANG_VEL_MINIMA   = 55;   // piso de dificultad: por mas niveles que pasen no aceleran mas
 const uint8_t  TWANG_VIDAS        = 3;
-const uint8_t  TWANG_MAX_ENEMIGOS = 12;   // tope de la tanda (tamano de los arrays paralelos)
+// Twang es de los juegos ABSOLUTOS: los bichos, la lava y las cintas miden lo
+// mismo en las dos tiras, asi que la larga es el doble de mazmorra. Para que no
+// quede el doble de vacia, cada nivel pone el doble de todo (y por eso su
+// record --el nivel alcanzado-- se guarda por largo de tira).
+//
+// Los tres MAX dimensionan los arrays para la tira larga; los topes reales de
+// cada tanda salen de las tope*(), que con la corta dan 12 / 4 / 3.
+const uint8_t  TWANG_MAX_ENEMIGOS = 24;   // tamano de los arrays paralelos
 const uint8_t  TWANG_ENEMIGOS_N1  = 3;    // enemigos del nivel 1; sube de a uno por nivel
 const uint16_t TWANG_APARICION_MS = 900;  // separacion entre apariciones para que no salgan todos pegados
 const uint16_t TWANG_ATAQUE_MS    = 200;  // ventana en la que el pulso mata (y en la que se ve creciendo)
@@ -29,8 +36,11 @@ const uint16_t TWANG_FIN_MS       = 3000; // duracion de la animacion de derrota
 
 // Terreno del nivel: lava (tramos que se prenden y apagan) y cintas
 // transportadoras (tramos que empujan al que este parado encima).
-const uint8_t  TWANG_MAX_LAVA     = 4;    // tope de tramos de lava por nivel
-const uint8_t  TWANG_MAX_CINTAS   = 3;    // tope de cintas por nivel
+const uint8_t  TWANG_MAX_LAVA     = 8;    // idem para la lava
+const uint8_t  TWANG_MAX_CINTAS   = 6;    // idem para las cintas
+static uint8_t topeEnemigos() { return (uint8_t)escalaLeds(12); }
+static uint8_t topeLava()     { return (uint8_t)escalaLeds(4);  }
+static uint8_t topeCintas()   { return (uint8_t)escalaLeds(3);  }
 const int16_t  TWANG_TERRENO_MARGEN = 12; // LEDs despejados en la base (donde se reaparece)
                                           // y en la salida: nunca es imposible arrancar ni terminar
 const uint16_t TWANG_LAVA_ON_MS   = 1400; // cuanto queda encendida (peligrosa)
@@ -116,14 +126,14 @@ static uint8_t enemigosVivos() {
 // se pisan y siempre queda camino libre entre ellos. Se alternan los tipos para
 // que no queden todas las lavas de un lado y todas las cintas del otro.
 static void generarTerreno() {
-  lavaN   = nivel / 2;              // 0 en el nivel 1, 1 en el 2 y 3, 2 en el 4 y 5...
-  cintasN = (nivel - 1) / 2;        // lo mismo corrido un nivel: arranca en el 3
-  if (lavaN   > TWANG_MAX_LAVA)   lavaN   = TWANG_MAX_LAVA;
-  if (cintasN > TWANG_MAX_CINTAS) cintasN = TWANG_MAX_CINTAS;
+  lavaN   = (uint8_t)escalaLeds(nivel / 2);        // 0 en el nivel 1, 1 en el 2 y 3...
+  cintasN = (uint8_t)escalaLeds((nivel - 1) / 2);  // lo mismo corrido un nivel: arranca en el 3
+  if (lavaN   > topeLava())   lavaN   = topeLava();
+  if (cintasN > topeCintas()) cintasN = topeCintas();
 
   uint32_t ahora  = millis();
   int16_t  cursor = TWANG_TERRENO_MARGEN;                    // despues de la zona de reaparicion
-  int16_t  limite = NUM_LEDS - 1 - TWANG_TERRENO_MARGEN;     // antes de la salida
+  int16_t  limite = LARGO_TIRA - 1 - TWANG_TERRENO_MARGEN;     // antes de la salida
   uint8_t  lavas = 0, cintas = 0;
   bool     tocaLava = true;
 
@@ -162,8 +172,8 @@ static void generarTerreno() {
 // piso de velocidad para que no se vuelva imposible. Las apariciones se
 // escalonan en el tiempo (y un poco en la posicion) para que no salgan pegados.
 static void iniciarTanda() {
-  uint8_t n = TWANG_ENEMIGOS_N1 + (nivel - 1);
-  if (n > TWANG_MAX_ENEMIGOS) n = TWANG_MAX_ENEMIGOS;
+  uint8_t n = (uint8_t)escalaLeds(TWANG_ENEMIGOS_N1 + (nivel - 1));
+  if (n > topeEnemigos()) n = topeEnemigos();
 
   if (nivel == 1) velEnemigo = velInicial;    // el pote fija el nivel 1
   else velEnemigo = max<int>(TWANG_VEL_MINIMA, (velEnemigo * 88) / 100);
@@ -171,7 +181,7 @@ static void iniciarTanda() {
   uint32_t ahora = millis();
   for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS; i++) {
     enemigoVivo[i]    = (i < n);
-    enemigoPos[i]     = NUM_LEDS - 1 - (int16_t)random(0, 5);
+    enemigoPos[i]     = LARGO_TIRA - 1 - (int16_t)random(0, 5);
     enemigoAparece[i] = ahora + (uint32_t)i * TWANG_APARICION_MS;
     enemigoPaso[i]    = enemigoAparece[i];
   }
@@ -240,9 +250,9 @@ void loopTwang() {
   if (estadoTwang == TWANG_NIVEL) {
     // Nivel superado: barrido azul desde la salida hacia la base y siguiente tanda.
     uint32_t t = ahora - faseDesde;
-    int16_t  frente = NUM_LEDS - 1 - (int16_t)(t / 10);
+    int16_t  frente = LARGO_TIRA - 1 - (int16_t)(t / 10);
     FastLED.clear();
-    for (int16_t i = frente; i < NUM_LEDS; i++) setLed(i, COL_SALIDA);
+    for (int16_t i = frente; i < LARGO_TIRA; i++) setLed(i, COL_SALIDA);
     FastLED.show();
     if (t > TWANG_SALIDA_MS) {
       nivel++;
@@ -269,7 +279,7 @@ void loopTwang() {
   }
 
   if (jugadorPos < 0)            jugadorPos = 0;
-  if (jugadorPos > NUM_LEDS - 1) jugadorPos = NUM_LEDS - 1;
+  if (jugadorPos > LARGO_TIRA - 1) jugadorPos = LARGO_TIRA - 1;
   int16_t jugadorLed = (int16_t)(jugadorPos + 0.5f);
 
   if (invul && ahora - invulDesde > TWANG_INVUL_MS) invul = false;
@@ -327,7 +337,7 @@ void loopTwang() {
 
   // --- Salida: cruzarla con la tanda limpia sube de nivel ---
   bool limpio = (enemigosVivos() == 0);
-  if (limpio && jugadorLed >= NUM_LEDS - 1) {
+  if (limpio && jugadorLed >= LARGO_TIRA - 1) {
     estadoTwang = TWANG_NIVEL;
     faseDesde   = ahora;
     sonarNivel();
@@ -339,7 +349,7 @@ void loopTwang() {
   FastLED.clear();
   // La salida parpadea SOLO con la tanda limpia; con enemigos vivos queda fija.
   bool salidaOn = limpio ? ((ahora / 200) % 2 == 0) : true;
-  setLed(NUM_LEDS - 1, salidaOn ? COL_SALIDA : CRGB(0, 10, 40));
+  setLed(LARGO_TIRA - 1, salidaOn ? COL_SALIDA : CRGB(0, 10, 40));
 
   // Lava: apagada se dibuja muy tenue (hay que ver donde esta para planear el
   // cruce) y en los ultimos TWANG_LAVA_AVISO_MS antes de prenderse parpadea

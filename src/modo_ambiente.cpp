@@ -35,9 +35,9 @@ const uint8_t  AMB_ESTANCADO   = 8;    // generaciones iguales seguidas antes de
 const uint16_t AMB_POTE_HISTERESIS = 40;
 
 // ---------- Estado ----------
-static uint8_t  cel[NUM_LEDS];        // 0 / 1: la generacion actual
-static uint8_t  nueva[NUM_LEDS];
-static uint8_t  edad[NUM_LEDS];       // generaciones que lleva viva: da el degrade de color
+static uint8_t  cel[LEDS_MAX];        // 0 / 1: la generacion actual
+static uint8_t  nueva[LEDS_MAX];
+static uint8_t  edad[LEDS_MAX];       // generaciones que lleva viva: da el degrade de color
 static uint8_t  regla;
 static uint16_t poteEstable;          // ultima lectura del pote que se acepto como cambio
 static uint32_t ultimaGen;
@@ -46,8 +46,8 @@ static bool     semillaCentro;        // alterna con el boton Verde
 static uint8_t  igualesSeguidas;      // detector de patron muerto o congelado
 
 static void sembrar() {
-  for (int16_t i = 0; i < NUM_LEDS; i++) {
-    cel[i]  = semillaCentro ? (i == NUM_LEDS / 2 ? 1 : 0) : (random8() < 100 ? 1 : 0);
+  for (int16_t i = 0; i < LARGO_TIRA; i++) {
+    cel[i]  = semillaCentro ? (i == LARGO_TIRA / 2 ? 1 : 0) : (random8() < 100 ? 1 : 0);
     edad[i] = cel[i];
   }
   igualesSeguidas = 0;
@@ -67,16 +67,16 @@ void nuevoAmbiente() {
 // el patron se apagaria desde las puntas y el modo se quedaria vacio.
 static void generar() {
   bool cambio = false;
-  for (int16_t i = 0; i < NUM_LEDS; i++) {
-    uint8_t izq = cel[(i - 1 + NUM_LEDS) % NUM_LEDS];
-    uint8_t der = cel[(i + 1) % NUM_LEDS];
+  for (int16_t i = 0; i < LARGO_TIRA; i++) {
+    uint8_t izq = cel[(i - 1 + LARGO_TIRA) % LARGO_TIRA];
+    uint8_t der = cel[(i + 1) % LARGO_TIRA];
     uint8_t idx = (izq << 2) | (cel[i] << 1) | der;
     nueva[i] = (regla >> idx) & 1;
     if (nueva[i] != cel[i]) cambio = true;
   }
 
   uint16_t vivas = 0;
-  for (int16_t i = 0; i < NUM_LEDS; i++) {
+  for (int16_t i = 0; i < LARGO_TIRA; i++) {
     cel[i] = nueva[i];
     if (cel[i]) {
       vivas++;
@@ -89,7 +89,7 @@ static void generar() {
   // Muchas reglas mueren o se congelan (la 0 apaga todo, la 255 prende todo).
   // Sin esto el modo ambiente se quedaria en una tira fija hasta que alguien
   // toque un boton, que es justo lo contrario de lo que tiene que hacer.
-  if (!cambio || vivas == 0 || vivas == NUM_LEDS) {
+  if (!cambio || vivas == 0 || vivas == LARGO_TIRA) {
     if (++igualesSeguidas >= AMB_ESTANCADO) sembrar();
   } else {
     igualesSeguidas = 0;
@@ -142,7 +142,7 @@ void loopAmbiente() {
     generar();
   }
 
-  for (int16_t i = 0; i < NUM_LEDS; i++) {
+  for (int16_t i = 0; i < LARGO_TIRA; i++) {
     leds[i] = cel[i] ? colorCelda(edad[i]) : CRGB::Black;
   }
   FastLED.show();
@@ -155,6 +155,6 @@ void lcdAmbiente() {
 
 String webAmbiente() {
   uint16_t vivas = 0;
-  for (int16_t i = 0; i < NUM_LEDS; i++) if (cel[i]) vivas++;
+  for (int16_t i = 0; i < LARGO_TIRA; i++) if (cel[i]) vivas++;
   return "Regla " + String(regla) + ", " + String(vivas) + " celdas vivas";
 }

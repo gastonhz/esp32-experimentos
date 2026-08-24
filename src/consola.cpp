@@ -9,7 +9,10 @@
 #include <esp_system.h>
 
 // ---------- Tira ----------
-CRGB     leds[NUM_LEDS];
+CRGB     leds[LEDS_MAX];
+uint16_t LARGO_TIRA  = 100;     // arranca en la corta; iniciarAjustes() lo pisa con lo guardado
+uint8_t  ORIENTACION = TIRA_VERTICAL;
+bool     SILENCIO    = false;   // no se guarda: cada encendido arranca con sonido
 uint16_t BRILLO = 128;
 
 const CRGB COL_RECORD = CRGB(255, 200, 0);
@@ -37,7 +40,7 @@ String textoGana(uint8_t jugador) {
 
 // ---------- Dibujo ----------
 void setLed(int16_t i, const CRGB& c) {
-  if (i >= 0 && i < NUM_LEDS) leds[i] = c;
+  if (i >= 0 && i < LARGO_TIRA) leds[i] = c;
 }
 
 void dibujarPuntoConEstela(int16_t pos, int8_t dir, const CRGB& col, uint8_t largo) {
@@ -51,7 +54,7 @@ void dibujarPuntoConEstela(int16_t pos, int8_t dir, const CRGB& col, uint8_t lar
 
 void dibujarChispasRecord() {
   for (uint8_t s = 0; s < 3; s++) {
-    if (random8() < 60) setLed(random16(NUM_LEDS), COL_RECORD);
+    if (random8() < 60) setLed(random16(LARGO_TIRA), COL_RECORD);
   }
 }
 
@@ -379,11 +382,11 @@ bool loopSelectorJugadores(uint8_t& n) {
   // jugar: se ve de un vistazo quienes entran, sin leer el LCD.
   FastLED.clear();
   for (uint8_t j = 0; j < n; j++) {
-    int16_t ini = (int16_t)(((int32_t)NUM_LEDS * j) / n);
-    int16_t fin = (int16_t)(((int32_t)NUM_LEDS * (j + 1)) / n) - 1;
+    int16_t ini = (int16_t)(((int32_t)LARGO_TIRA * j) / n);
+    int16_t fin = (int16_t)(((int32_t)LARGO_TIRA * (j + 1)) / n) - 1;
     for (int16_t i = ini; i <= fin; i++) setLed(i, CONTROLES[j].color);
   }
-  nscale8(leds, NUM_LEDS, 60);
+  nscale8(leds, LARGO_TIRA, 60);
   FastLED.show();
   return false;
 }
@@ -414,8 +417,19 @@ static float leerEjeNorm(uint8_t jugador, uint8_t eje) {
   return (d > 0) ? f : -f;
 }
 
-float leerJoyNorm(uint8_t jugador) { return leerEjeNorm(jugador, EJE_TIRA); }
-float leerJoyCruz(uint8_t jugador) { return leerEjeNorm(jugador, EJE_CRUZ); }
+// Con la tira acostada, el eje que corre a lo largo de la tira pasa a ser el
+// horizontal del stick y el transversal pasa a ser el vertical. La traduccion
+// vive SOLO aca, en los dos lectores que usan los juegos: los menus, el
+// selector de jugadores y la pantalla de las tres letras siguen con el eje
+// fisico transversal, porque el texto del LCD se lee igual este la tira parada
+// o acostada. JOY_INVERTIDO no se entera: se aplica sobre el eje fisico.
+static uint8_t ejeFisico(uint8_t ejeLogico) {
+  if (ORIENTACION != TIRA_HORIZONTAL) return ejeLogico;
+  return (ejeLogico == EJE_TIRA) ? EJE_CRUZ : EJE_TIRA;
+}
+
+float leerJoyNorm(uint8_t jugador) { return leerEjeNorm(jugador, ejeFisico(EJE_TIRA)); }
+float leerJoyCruz(uint8_t jugador) { return leerEjeNorm(jugador, ejeFisico(EJE_CRUZ)); }
 
 // Convierte la deflexion de un eje en pasos discretos: devuelve -1/0/+1. Da un
 // paso al salir de la zona muerta y, si se mantiene el stick, repite cada
@@ -479,6 +493,7 @@ static uint8_t  jingleIdx       = 0;
 static uint32_t jingleNotaHasta = 0;
 
 void beep(uint16_t freq, uint16_t dur) {
+  if (SILENCIO) return;
   jingleLen = 0;                    // un beep corta cualquier melodia
   ledcWriteTone(BUZZER_CH, freq);
   buzzerHasta   = millis() + dur;
@@ -486,6 +501,7 @@ void beep(uint16_t freq, uint16_t dur) {
 }
 
 void tocarJingle(const Nota* notas, uint8_t len) {
+  if (SILENCIO) return;
   buzzerSonando   = false;
   jingle          = notas;
   jingleLen       = len;
@@ -600,19 +616,21 @@ void iniciarLCD() {
 // ---------- Records persistentes (NVS) ----------
 // OJO: las claves son las que ya estan grabadas en la flash de la placa. Si se
 // cambia una, el record viejo queda huerfano y arranca de cero.
+//                                                        menor  por
+//   clave      nombre           prefijo   unidad         esMejor largo
 const RecordDef RECORDS[] = {
-  { "hsPong",   "Pong",          "",       " golpes",  false },
-  { "hsTug",    "Tira y Afloja", "",       " empujes", false },
-  { "hsRc",     "Rompecolores",  "",       " pts",     false },
-  { "hsTwang",  "Twang",         "Nivel ", "",         false },
-  { "hsPaddle", "Paddle",        "",       " pts",     false },
-  { "hsStack",  "Stacker",       "Piso ",  "",         false },
-  { "hsEsq",    "Salta Muros",       "",       " muros",   false },
-  { "hsLander", "Alunizaje",        "",       " aluniza.", false },
-  { "hsDuelo",  "Reaccion",      "",       " ms",      true  },   // gana el tiempo mas CHICO
-  { "hsCarr",   "Carrera",       "",       " ms/vta",  true  },   // idem: mejor vuelta
-  { "hsPelea",  "Pelea",         "",       " golpes",  false },
-  { "hsWest",   "Tiros",         "",       " cruces",  false },   // balas anuladas en el aire
+  { "hsPong",   "Pong",          "",       " golpes",   false,  false },
+  { "hsTug",    "Tira y Afloja", "",       " empujes",  false,  true  },   // mas tira que empujar
+  { "hsRc",     "Rompecolores",  "",       " pts",      false,  true  },   // el muro tarda el doble
+  { "hsTwang",  "Twang",         "Nivel ", "",          false,  true  },   // mazmorra del doble
+  { "hsPaddle", "Paddle",        "",       " pts",      false,  false },
+  { "hsStack",  "Stacker",       "Piso ",  "",          false,  false },
+  { "hsEsq",    "Salta Muros",   "",       " muros",    false,  true  },   // el doble de muros
+  { "hsLander", "Alunizaje",     "",       " aluniza.", false,  false },
+  { "hsDuelo",  "Reaccion",      "",       " ms",       true,   false },   // gana el tiempo mas CHICO
+  { "hsCarr",   "Carrera",       "",       " ms/vta",   true,   true  },   // idem: mejor vuelta
+  { "hsPelea",  "Pelea",         "",       " golpes",   false,  false },
+  { "hsWest",   "Tiros",         "",       " cruces",   false,  false },   // balas anuladas en el aire
 };
 static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
               "RECORDS[] y el enum Record quedaron desincronizados");
@@ -620,14 +638,46 @@ static_assert(sizeof(RECORDS) / sizeof(RECORDS[0]) == NUM_RECORDS,
 uint32_t hsValor[NUM_RECORDS];
 char     hsNombre[NUM_RECORDS][LARGO_NOMBRE + 1];
 static Preferences prefs;
+static bool prefsListas = false;
+
+// La NVS la comparten los records y los ajustes, y begin() se llama una sola
+// vez: llamarlo dos veces sobre el mismo handle abre otro y pierde el anterior.
+static void abrirPrefs() {
+  if (prefsListas) return;
+  prefs.begin("gasti", false);      // ojo: "gasti" es el namespace viejo, ver iniciarRecords()
+  prefsListas = true;
+}
 
 static int8_t  recPend    = -1;  // record batido al que todavia le falta el nombre
 static uint8_t recPendJug = 0;   // el control que lo hizo: es el que lo va a firmar
 
-// La clave del nombre es la del valor con una "N" pegada ("hsPong" -> "hsPongN").
-// Entra holgado en los 15 caracteres que admite la NVS y no pisa nada de lo que
-// ya estaba grabado.
-static String claveNombre(uint8_t rec) { return String(RECORDS[rec].clave) + "N"; }
+// La clave del valor es la de la tabla en la tira corta, y esa misma con una "L"
+// pegada en la larga, solo para los records que dependen del largo. Asi los
+// records ya grabados siguen siendo los de la tira de 100, sin migrar nada.
+//
+// La del nombre es la del valor mas una "N" ("hsPong" -> "hsPongN", "hsCarrL" ->
+// "hsCarrLN"). Todo entra holgado en los 15 caracteres que admite la NVS.
+static String claveValor(uint8_t rec) {
+  String k = RECORDS[rec].clave;
+  if (RECORDS[rec].porLargo && LARGO_TIRA >= 200) k += "L";
+  return k;
+}
+static String claveNombre(uint8_t rec) { return claveValor(rec) + "N"; }
+
+// Trae de la NVS el valor y las iniciales de UN record, los del largo actual.
+static void cargarRecord(uint8_t i) {
+  hsValor[i] = prefs.getUInt(claveValor(i).c_str(), 0);
+  // getString no toca el buffer si la clave no existe (los records viejos, de
+  // antes de que hubiera nombres), asi que hay que vaciarlo antes.
+  hsNombre[i][0] = '\0';
+  prefs.getString(claveNombre(i).c_str(), hsNombre[i], sizeof(hsNombre[i]));
+}
+
+void recargarRecords() {
+  for (uint8_t i = 0; i < NUM_RECORDS; i++) {
+    if (RECORDS[i].porLargo) cargarRecord(i);
+  }
+}
 
 void iniciarRecords() {
   // La primera vez que se enciende la placa no existe la clave todavia y
@@ -636,14 +686,8 @@ void iniciarRecords() {
   // OJO: "gasti" es el namespace de NVS, NO un nombre visible. Quedo del nombre
   // viejo de la consola y se deja asi a proposito: renombrarlo dejaria
   // huerfanos todos los records ya grabados en la flash.
-  prefs.begin("gasti", false);
-  for (uint8_t i = 0; i < NUM_RECORDS; i++) {
-    hsValor[i] = prefs.getUInt(RECORDS[i].clave, 0);
-    // getString no toca el buffer si la clave no existe (los records viejos, de
-    // antes de que hubiera nombres), asi que hay que vaciarlo antes.
-    hsNombre[i][0] = '\0';
-    prefs.getString(claveNombre(i).c_str(), hsNombre[i], sizeof(hsNombre[i]));
-  }
+  abrirPrefs();
+  for (uint8_t i = 0; i < NUM_RECORDS; i++) cargarRecord(i);
 }
 
 bool intentarRecord(uint8_t rec, uint32_t valor, uint8_t jugador) {
@@ -653,7 +697,7 @@ bool intentarRecord(uint8_t rec, uint32_t valor, uint8_t jugador) {
                                          : (valor > actual);
   if (!mejor) return false;
   hsValor[rec] = valor;
-  prefs.putUInt(RECORDS[rec].clave, valor);
+  prefs.putUInt(claveValor(rec).c_str(), valor);
   // Las iniciales que habia son del duenio anterior y ya no valen. Se borran
   // aca mismo, y no cuando se guardan las nuevas, para que un corte de luz en
   // el medio deje el record sin nombre y no con el nombre equivocado.
@@ -681,4 +725,82 @@ void cancelarNombreRecord() { recPend = -1; }
 String textoRecord(uint8_t rec) {
   if (hsValor[rec] == 0) return "---";
   return String(RECORDS[rec].prefijo) + String(hsValor[rec]) + String(RECORDS[rec].unidad);
+}
+
+// ---------- Ajustes: largo de la tira, orientacion y silencio ----------
+// Con 200 LEDs la misma escena consume el doble, asi que la tira larga arranca
+// mas abajo de brillo y el limitador de FastLED se encarga del resto. Cambiar
+// el largo pisa el brillo con este valor: si despues se tunea por web, ese
+// numero es el que manda hasta el proximo cambio de largo.
+static uint16_t brilloDe(uint16_t largo) { return (largo >= 200) ? 100 : 128; }
+
+void iniciarAjustes() {
+  abrirPrefs();
+  uint16_t largo = prefs.getUShort("largo", 100);
+  LARGO_TIRA  = (largo >= 200) ? 200 : 100;      // solo dos valores validos
+  ORIENTACION = prefs.getUChar("orient", TIRA_VERTICAL) ? TIRA_HORIZONTAL : TIRA_VERTICAL;
+  BRILLO      = brilloDe(LARGO_TIRA);
+  SILENCIO    = false;                           // este no se guarda a proposito
+}
+
+void ponerLargoTira(uint16_t largo) {
+  largo = (largo >= 200) ? 200 : 100;
+  if (largo == LARGO_TIRA) return;
+
+  // Al acortar hay que apagar la cola ANTES de cambiar el largo: si no, los
+  // LEDs que dejan de usarse se quedan prendidos con lo ultimo que mostraron,
+  // porque ya nadie les vuelve a mandar datos.
+  fill_solid(leds, LEDS_MAX, CRGB::Black);
+  FastLED.show();
+
+  LARGO_TIRA = largo;
+  FastLED[0].setLeds(leds, LARGO_TIRA);
+  BRILLO = brilloDe(LARGO_TIRA);
+  FastLED.setBrightness((uint8_t)BRILLO);
+  FastLED.clear(true);
+
+  prefs.putUShort("largo", LARGO_TIRA);
+  recargarRecords();     // los records que dependen del largo son otros ahora
+}
+
+void ponerOrientacion(uint8_t orient) {
+  ORIENTACION = (orient == TIRA_HORIZONTAL) ? TIRA_HORIZONTAL : TIRA_VERTICAL;
+  prefs.putUChar("orient", (uint8_t)ORIENTACION);
+}
+
+void ponerSilencio(bool s) {
+  SILENCIO = s;
+  if (!s) return;
+  ledcWriteTone(BUZZER_CH, 0);      // corta en seco lo que estuviera sonando
+  buzzerSonando = false;
+  jingleLen     = 0;
+}
+
+// ---------- Escala de los juegos proporcionales ----------
+// Todo lo que entra aca esta expresado en LEDs (o en LEDs/s, o en ms por LED)
+// de una tira de 100. Con la tira corta las tres funciones son la identidad.
+int16_t  escalaLeds(int16_t leds100)      { return (int16_t)(((int32_t)leds100 * LARGO_TIRA) / 100); }
+
+// Sirve igual para LEDs/s y para LEDs/s^2 (la gravedad y el empuje del
+// Alunizaje): cualquier magnitud "por LED" crece con el largo en la misma
+// proporcion, asi que caer la tira entera sigue tardando lo mismo.
+uint16_t escalaVel(uint16_t ledsPorSeg)   { return (uint16_t)(((uint32_t)ledsPorSeg * LARGO_TIRA) / 100); }
+
+// El periodo va al reves que la velocidad: con el doble de LEDs, cada paso dura
+// la mitad para que la pelota tarde lo mismo en cruzar. Nunca devuelve 0, que
+// seria un movimiento sin espera ninguna.
+uint16_t escalaMsPorLed(uint16_t ms) {
+  uint32_t r = ((uint32_t)ms * 100) / LARGO_TIRA;
+  return (r > 0) ? (uint16_t)r : 1;
+}
+
+// ---------- Guardado generico en NVS ----------
+size_t guardarBlob(const char* clave, const void* datos, size_t n) {
+  abrirPrefs();
+  return prefs.putBytes(clave, datos, n);
+}
+
+size_t leerBlob(const char* clave, void* datos, size_t n) {
+  abrirPrefs();
+  return prefs.getBytes(clave, datos, n);
 }

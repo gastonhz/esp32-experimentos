@@ -47,6 +47,9 @@
 #include "juego_western.h"
 
 // ---------- Parametros ----------
+// Juego PROPORCIONAL: lo que esta en LEDs o en LEDs/s vale para una tira de 100.
+// Las VIDAS no escalan --son vidas, y el record cuenta balas anuladas--; lo que
+// escala es el cuerpo que se dibuja con ellas.
 uint16_t WES_VEL_JUGADOR = 16;    // LEDs/s caminando
 uint16_t WES_VEL_BALA    = 40;    // LEDs/s: cruzar la tira entera son ~2,5 s
 uint16_t WES_CARGADOR    = 6;     // balas por cargador
@@ -61,7 +64,9 @@ const uint16_t WES_FIN_MS    = 4000;
 
 // Sin barras en las puntas, toda la tira es piso.
 const int16_t WES_PISO_MIN = 0;
-const int16_t WES_PISO_MAX = NUM_LEDS - 1;
+// Depende del largo de la tira, que ahora se elige en Ajustes: va como funcion
+// y no como constante de archivo, que se calcularia una sola vez al encender.
+static int16_t wesPisoMax() { return LARGO_TIRA - 1; }
 
 const uint8_t WES_NADIE = 255;
 
@@ -109,14 +114,14 @@ static void sonarListo()         { beep(1500, 60); }
 static void limitarPosiciones() {
   for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
     if (pos[j] < WES_PISO_MIN) pos[j] = WES_PISO_MIN;
-    if (pos[j] > WES_PISO_MAX) pos[j] = WES_PISO_MAX;
+    if (pos[j] > wesPisoMax()) pos[j] = wesPisoMax();
   }
 }
 
 // La distancia al rival vivo mas cercano: es contra ese que se mide si el tiro
 // sale a quemarropa.
 static float distanciaAlMasCercano(uint8_t j) {
-  float mejor = (float)NUM_LEDS;
+  float mejor = (float)LARGO_TIRA;
   for (uint8_t o = 0; o < NUM_CONTROLES; o++) {
     if (o == j || !vivo(o)) continue;
     float d = pos[j] - pos[o];
@@ -132,7 +137,7 @@ static bool dispararBala(uint8_t j) {
     bala[k].viva       = true;
     bala[k].dir        = mirando[j];
     bala[k].pos        = pos[j] + mirando[j];   // sale del cano, no de adentro del cuerpo
-    bala[k].quemarropa = (distanciaAlMasCercano(j) <= (float)WES_QUEMARROPA);
+    bala[k].quemarropa = (distanciaAlMasCercano(j) <= (float)escalaLeds(WES_QUEMARROPA));
     bala[k].deQuien    = j;
     return true;
   }
@@ -161,7 +166,7 @@ static void actualizarPistolero(uint8_t j, uint32_t ahora, float dt) {
   float giro = (float)WES_GIRO_MIN / 100.0f;
   if      (m >=  giro) mirando[j] = +1;
   else if (m <= -giro) mirando[j] = -1;
-  pos[j] += m * (float)WES_VEL_JUGADOR * dt;
+  pos[j] += m * (float)escalaVel(WES_VEL_JUGADOR) * dt;
 
   if (!btnFlanco[j]) return;
 
@@ -181,8 +186,8 @@ static void actualizarBalas(uint32_t ahora, float dt) {
   for (uint8_t k = 0; k < WES_MAX_BALAS; k++) {
     if (!bala[k].viva) continue;
     antes[k]    = bala[k].pos;
-    bala[k].pos += bala[k].dir * (float)WES_VEL_BALA * dt;
-    if (bala[k].pos < 0.0f || bala[k].pos > (float)(NUM_LEDS - 1)) bala[k].viva = false;
+    bala[k].pos += bala[k].dir * (float)escalaVel(WES_VEL_BALA) * dt;
+    if (bala[k].pos < 0.0f || bala[k].pos > (float)(LARGO_TIRA - 1)) bala[k].viva = false;
   }
 
   // Dos balas de sentido opuesto que se cruzan se anulan. Se detecta por cambio
@@ -232,7 +237,7 @@ static void actualizarBalas(uint32_t ahora, float dt) {
 // otro y volveria a pasar lo de "desaparecio un jugador". Sumando, el solape se
 // ve como mezcla (verde + azul da cian) y se entiende que estan los dos ahi.
 static void sumarLed(int16_t i, const CRGB& c) {
-  if (i >= 0 && i < NUM_LEDS) leds[i] += c;
+  if (i >= 0 && i < LARGO_TIRA) leds[i] += c;
 }
 
 static void dibujarWestern(uint32_t ahora) {
@@ -257,7 +262,7 @@ static void dibujarWestern(uint32_t ahora) {
     // que sobrevive es siempre el frente, o sea que quedarse en uno se ve como
     // "ya no tengo con que cubrirme".
     sumarLed(p, c);
-    for (uint8_t k = 1; k < vidas[j]; k++) sumarLed(p - mirando[j] * (int16_t)k, espalda);
+    for (int16_t k = 1; k < escalaLeds(vidas[j]); k++) sumarLed(p - mirando[j] * k, espalda);
   }
 
   for (uint8_t k = 0; k < WES_MAX_BALAS; k++) {
@@ -297,8 +302,8 @@ static void arrancarTiros() {
   uint8_t k = 0;
   for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
     if (!jugando[j]) continue;
-    pos[j] = margen + (float)(NUM_LEDS - 1 - 2 * margen) * (float)k / (float)(numJugadores - 1);
-    mirando[j] = (pos[j] < NUM_LEDS / 2) ? +1 : -1;
+    pos[j] = margen + (float)(LARGO_TIRA - 1 - 2 * margen) * (float)k / (float)(numJugadores - 1);
+    mirando[j] = (pos[j] < LARGO_TIRA / 2) ? +1 : -1;
     k++;
   }
 
@@ -322,7 +327,7 @@ void loopWestern() {
     uint32_t t = ahora - faseDesde;
     CRGB c = CONTROLES[ganador].color;
     FastLED.clear();
-    for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    for (uint16_t i = 0; i < LARGO_TIRA; i++) {
       if ((i + t / 40) % 4 == 0) leds[i] = c;
     }
     if (esRecord) dibujarChispasRecord();

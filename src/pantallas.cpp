@@ -2,6 +2,7 @@
 
 #include "pantallas.h"
 #include "panel_web.h"
+#include "juego_carrera.h"
 
 // ---------- Highscores: vitrina de records ----------
 // Un record por pantalla. Se pasa de juego con el joystick, igual que en el
@@ -21,8 +22,8 @@ void loopHighscores() {
   }
 
   uint8_t b = beatsin8(20, 10, 60);      // dorado respirando, sin prisa
-  fill_solid(leds, NUM_LEDS, COL_RECORD);
-  nscale8(leds, NUM_LEDS, b);
+  fill_solid(leds, LARGO_TIRA, COL_RECORD);
+  nscale8(leds, LARGO_TIRA, b);
   FastLED.show();
 }
 
@@ -136,8 +137,8 @@ void loopNombre() {
   // Fondo del color del que firma, respirando, con las chispas del record: se
   // entiende de quien es el turno sin tener que decirlo en el LCD.
   uint8_t b = beatsin8(20, 10, 60);
-  fill_solid(leds, NUM_LEDS, CONTROLES[nomJug].color);
-  nscale8(leds, NUM_LEDS, b);
+  fill_solid(leds, LARGO_TIRA, CONTROLES[nomJug].color);
+  nscale8(leds, LARGO_TIRA, b);
   dibujarChispasRecord();
   FastLED.show();
 }
@@ -161,28 +162,112 @@ void lcdNombre() {
   lcdLinea(1, (nomSlot == LARGO_NOMBRE - 1) ? "pulsa p/ guardar" : "pulsa p/ elegir");
 }
 
-// ---------- IP: como entrar al panel web ----------
-// El LCD muestra la red y la IP (que ya se calcularon al levantar el AP) y la
-// tira queda en un azul tenue, sin animacion, para que se note que aca no hay
-// nada que jugar.
-void nuevoIP() {
+// ---------- Ajustes: como esta montada la consola ----------
+// Cuatro items. La cruz del Verde pasa de uno al siguiente y su boton arcade
+// cambia el valor del que este marcado. El ultimo, Red, no cambia nada: es la
+// ficha del panel web, que hasta ahora era una entrada propia del selector
+// ("IP") y se mudo aca adentro.
+//
+// La tira dibuja el largo elegido: se prende hasta LARGO_TIRA y el resto queda
+// negro, asi el ajuste se ve en la tira misma y no solo en el LCD. Es la unica
+// forma de darse cuenta de una si la consola quedo configurada para la tira
+// corta con la larga enchufada.
+enum ItemAjuste { AJ_LARGO, AJ_ORIENTACION, AJ_SILENCIO, AJ_PISTA, AJ_RED, AJ_ITEMS };
+
+static uint8_t ajItem;
+static bool    ajRegla = true;    // la regla encima de la pista, en el item Pista
+
+// Regla para contar LEDs sobre la tira ya colocada: una marca cada 10 y una mas
+// fuerte cada 50. Es lo que hace falta para anotar "de tal a tal LED" caminando
+// al lado de la tira antes de cargar la pista en el panel web.
+static void dibujarRegla() {
+  for (int16_t i = 0; i < LARGO_TIRA; i += 10) {
+    setLed(i, (i % 50 == 0) ? CRGB(255, 255, 255) : CRGB(90, 90, 90));
+  }
+}
+
+void nuevoAjustes() {
+  ajItem = 0;
   lcdForzarRefresh();
 }
 
-void loopIP() {
-  fill_solid(leds, NUM_LEDS, CRGB(0, 60, 255));
-  nscale8(leds, NUM_LEDS, 30);
+void loopAjustes() {
+  int8_t paso = joystickPaso(0);
+  if (paso) {
+    ajItem = (ajItem + AJ_ITEMS + paso) % AJ_ITEMS;
+    beep(1200, 25);
+  }
+
+  if (btnFlanco[0]) {
+    switch (ajItem) {
+      case AJ_LARGO:
+        ponerLargoTira((LARGO_TIRA >= 200) ? 100 : 200);
+        break;
+      case AJ_ORIENTACION:
+        ponerOrientacion((ORIENTACION == TIRA_HORIZONTAL) ? TIRA_VERTICAL : TIRA_HORIZONTAL);
+        break;
+      case AJ_SILENCIO:
+        // Al silenciar, el beep de confirmacion no suena --que es justamente la
+        // confirmacion--; al devolver el sonido, si.
+        ponerSilencio(!SILENCIO);
+        break;
+      case AJ_PISTA:
+        // La regla tapa un LED de cada diez: se apaga para ver el borde exacto
+        // de cada tramo, y se prende para contar.
+        ajRegla = !ajRegla;
+        break;
+      default:
+        break;                    // Red no tiene nada que cambiar
+    }
+    if (ajItem != AJ_RED) beep(1600, 40);
+  }
+
+  // En Pista la tira muestra los tramos cargados, con la regla encima si esta
+  // prendida. En el resto de los items muestra el largo elegido.
+  FastLED.clear();
+  if (ajItem == AJ_PISTA) {
+    dibujarPistaCargada();
+    if (ajRegla) dibujarRegla();
+  } else {
+    fill_solid(leds, LARGO_TIRA, CRGB(0, 60, 255));
+    nscale8(leds, LARGO_TIRA, 30);
+  }
   FastLED.show();
 }
 
-// El SSID va solo, sin prefijo: el nombre de la red ya se entiende por si mismo
-// y asi queda lugar para la IP completa en la otra fila. La clave no se muestra:
-// la sabe el que armo la consola.
-void lcdIP() {
-  lcdLinea(0, AP_SSID);
-  lcdLinea(1, apIP);
+// Los items editables van con el nombre y las flechas arriba y el valor abajo.
+// El de la red usa las DOS filas para el SSID y la IP juntos: es el unico sin
+// valor que cambiar, y lo que se quiere ahi es leer las dos cosas de una para
+// tipearlas en el celular. La clave del WiFi no se muestra: la sabe el que armo
+// la consola. Pista no muestra un valor sino el estado de la regla, porque lo
+// que hay para mirar ahi esta en la tira y no en el display.
+void lcdAjustes() {
+  if (ajItem == AJ_RED) {
+    lcdLinea(0, AP_SSID);
+    lcdLinea(1, apIP);
+    return;
+  }
+
+  static const char* TITULO[] = { "< Largo tira >", "< Orientacion >", "< Silenciar >", "< Pista >" };
+  String valor;
+  switch (ajItem) {
+    case AJ_LARGO:       valor = " " + String(LARGO_TIRA) + " LEDs"; break;
+    case AJ_ORIENTACION: valor = (ORIENTACION == TIRA_HORIZONTAL) ? "Horizontal" : " Vertical"; break;
+    case AJ_PISTA:       valor = ajRegla ? " con regla" : " sin regla"; break;
+    default:             valor = SILENCIO ? " si" : " no"; break;
+  }
+
+  // En Pista el titulo lleva cuantos tramos hay cargados: con cero, cada carrera
+  // sortea sus cuestas, y eso se tiene que ver sin ir hasta el panel web.
+  String titulo = TITULO[ajItem];
+  if (ajItem == AJ_PISTA) {
+    uint8_t n = tramosCargados();
+    titulo = n ? ("< Pista: " + String(n) + " >") : "< Pista: azar >";
+  }
+  lcdLinea(0, titulo);
+  lcdLinea(1, "pulsa:" + valor);
 }
 
-String webIP() {
-  return "(pantalla informativa)";
+String webAjustes() {
+  return "(ajustes de la consola)";
 }

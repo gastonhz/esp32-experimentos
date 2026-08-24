@@ -30,7 +30,7 @@
     juego_pelea.*     combate cuerpo a cuerpo, de dos a cuatro peleadores
     juego_western.*   Tiros: duelo a distancia con balas lentas y direccionales
     modo_ambiente.*   automata celular elemental (no es un juego)
-    pantallas.*       Highscores, IP y las tres letras del record (no son juegos)
+    pantallas.*       Highscores, Ajustes y las tres letras del record (no son juegos)
     panel_web.*       AP WiFi + pagina de estado y tuneo
 
   Para agregar un juego: juego_x.h/.cpp con nuevoX/loopX/lcdX/webX, el #include
@@ -38,7 +38,8 @@
   MISMO orden que la tabla).
 
   Hardware (ver scripts-y-pruebas/setup-hardware-maquina-juegos-led.md):
-    Datos:    GPIO16 -> SN74AHCT125N -> 470ohm -> DIN tira (100 LEDs WS2812B)
+    Datos:    GPIO16 -> SN74AHCT125N -> 470ohm -> DIN tira WS2812B: la corta de
+              100 LEDs o la larga de 200. Cual esta puesta se elige en Ajustes.
     Buzzer:   GPIO25 (buzzer pasivo, PWM por LEDC) a GND
     LCD 1602: I2C 0x27, SDA=GPIO21, SCL=GPIO22 (marcador + mensajes de estado)
     Reset:    GPIO18 a GND (pulsador; INPUT_PULLUP, apretado = LOW) -> vuelve al menu
@@ -93,7 +94,7 @@ const JuegoDef JUEGOS[] = {
   { "Tiros",        nuevoWestern,       loopWestern,       lcdWestern,       webWestern       },
   { "Ambiente",     nuevoAmbiente,      loopAmbiente,      lcdAmbiente,      webAmbiente      },
   { "Highscores",   nuevoHighscores,    loopHighscores,    lcdHighscores,    webHighscores    },
-  { "IP",           nuevoIP,            loopIP,            lcdIP,            webIP            },
+  { "Ajustes",      nuevoAjustes,       loopAjustes,       lcdAjustes,       webAjustes       },
 };
 static_assert(sizeof(JUEGOS) / sizeof(JUEGOS[0]) == NUM_JUEGOS,
               "JUEGOS[] y el enum Juego quedaron desincronizados");
@@ -153,8 +154,8 @@ static void loopMenu() {
   static uint8_t  hue = 0;
   static uint32_t ultimo = 0;
   if (millis() - ultimo > 30) { ultimo = millis(); hue++; }
-  fill_rainbow(leds, NUM_LEDS, hue, 3);
-  nscale8(leds, NUM_LEDS, 40);   // bajar el brillo del atractor
+  fill_rainbow(leds, LARGO_TIRA, hue, 3);
+  nscale8(leds, LARGO_TIRA, 40);   // bajar el brillo del atractor
   FastLED.show();
 }
 
@@ -194,10 +195,15 @@ void setup() {
   iniciarJoysticks();
   calibrarJoys();
 
+  // Antes que FastLED: de aca sale con que largo de tira arranca y con que
+  // brillo, y los dos hacen falta para armar el controlador.
+  iniciarAjustes();
+
   iniciarRecords();
+  iniciarPistaCarrera();                // la pista dibujada a mano, si hay alguna
   iniciarLCD();                         // incluye el splash de arranque
 
-  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, LARGO_TIRA);
   FastLED.setBrightness((uint8_t)BRILLO);
   FastLED.setMaxPowerInVoltsAndMilliamps(5, 4700);  // red de seguridad: 4.5 A
   FastLED.clear(true);

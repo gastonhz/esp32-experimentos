@@ -160,7 +160,7 @@ void loopDuelo() {
     uint32_t t = ahora - faseDesde;
     CRGB c = CONTROLES[ganador].color;
     FastLED.clear();
-    for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    for (uint16_t i = 0; i < LARGO_TIRA; i++) {
       if ((i + t / 40) % 4 == 0) leds[i] = c;   // chase en el color del ganador
     }
     if (esRecord) dibujarChispasRecord();
@@ -175,7 +175,7 @@ void loopDuelo() {
     // color solo alcanza para saber quien se la llevo.
     uint32_t t = ahora - faseDesde;
     FastLED.clear();
-    if ((t / 200) % 2 == 0) fill_solid(leds, NUM_LEDS, CONTROLES[ganadorRonda].color);
+    if ((t / 200) % 2 == 0) fill_solid(leds, LARGO_TIRA, CONTROLES[ganadorRonda].color);
     FastLED.show();
     if (t > DUE_RESULTADO_MS) nuevaRonda();
     return;
@@ -192,7 +192,7 @@ void loopDuelo() {
       estadoDue = DUE_SENAL;
       faseDesde = ahora;
       sonarSenal();
-      fill_solid(leds, NUM_LEDS, CRGB::White);
+      fill_solid(leds, LARGO_TIRA, CRGB::White);
       FastLED.show();
       return;
     }
@@ -209,15 +209,15 @@ void loopDuelo() {
     if (ahora < saltoHasta) {
       // Quien se adelanto, en su propio color: con cuatro jugadores la ronda
       // sigue, asi que hace falta que se vea a quien acaban de eliminar.
-      fill_solid(leds, NUM_LEDS, CONTROLES[saltoQuien].color);
-      nscale8(leds, NUM_LEDS, 90);
+      fill_solid(leds, LARGO_TIRA, CONTROLES[saltoQuien].color);
+      nscale8(leds, LARGO_TIRA, 90);
     } else if (ahora < falsaHasta) {
-      fill_solid(leds, NUM_LEDS, CRGB(200, 0, 0));
+      fill_solid(leds, LARGO_TIRA, CRGB(200, 0, 0));
     } else {
       // Un latido tenue en el centro para que se note que la consola espera y
       // no que se colgo.
       FastLED.clear();
-      setLed(NUM_LEDS / 2, CRGB(0, 0, beatsin8(30, 4, 26)));
+      setLed(LARGO_TIRA / 2, CRGB(0, 0, beatsin8(30, 4, 26)));
     }
     FastLED.show();
     return;
@@ -234,7 +234,7 @@ void loopDuelo() {
   // la consola no quede clavada en blanco.
   if (ahora - faseDesde > 3000) { nuevaRonda(); return; }
 
-  fill_solid(leds, NUM_LEDS, CRGB::White);
+  fill_solid(leds, LARGO_TIRA, CRGB::White);
   FastLED.show();
 }
 

@@ -32,6 +32,10 @@
 #include "juego_pelea.h"
 
 // ---------- Parametros ----------
+// Juego PROPORCIONAL: lo que esta en LEDs o en LEDs/s vale para una tira de 100
+// y se pasa por escala*() al usarlo, asi en la tira larga todo crece junto y la
+// pelea se siente igual. La VIDA no escala: son puntos de vida, y el record
+// cuenta golpes conectados. Lo que escala es el CUERPO que se dibuja con ella.
 uint16_t PEL_VEL_JUGADOR   = 14;   // LEDs/s caminando
 uint16_t PEL_ALCANCE_CORTO = 3;    // alcance del golpe rapido (LEDs)
 uint16_t PEL_ALCANCE_LARGO = 10;   // alcance del cargado a full (LEDs)
@@ -49,8 +53,11 @@ const uint16_t PEL_FIN_MS     = 4000;
 
 // Toda la tira es piso: sin barras de vida en las puntas no hay nada que
 // esquivar. El margen es media vida, para que un cuerpo entero entre siempre.
-const int16_t PEL_PISO_MIN = PEL_VIDA_MAX / 2;
-const int16_t PEL_PISO_MAX = NUM_LEDS - 1 - PEL_VIDA_MAX / 2;
+// Medio cuerpo de margen en cada punta, con el cuerpo ya escalado a la tira.
+static int16_t pelPisoMin() { return escalaLeds(PEL_VIDA_MAX) / 2; }
+// Depende del largo de la tira, que ahora se elige en Ajustes: va como funcion
+// y no como constante de archivo, que se calcularia una sola vez al encender.
+static int16_t pelPisoMax() { return LARGO_TIRA - 1 - escalaLeds(PEL_VIDA_MAX) / 2; }
 
 const uint8_t PEL_NADIE = 255;
 
@@ -78,12 +85,15 @@ static uint32_t ultimoFrame;
 
 static inline bool vivo(uint8_t j) { return jugando[j] && vida[j] > 0; }
 
-// El cuerpo va centrado en pos y mide lo que le queda de vida.
+// El cuerpo va centrado en pos y mide lo que le queda de vida, escalado a la
+// tira: en la larga cada punto de vida son dos LEDs. Los golpes se resuelven
+// con estas mismas funciones, asi que el alcance y el cuerpo siguen encajando.
+static inline int16_t largoCuerpo(uint8_t j) { return escalaLeds(vida[j]); }
 static inline int16_t cuerpoIni(uint8_t j) {
-  return (int16_t)(pos[j] + 0.5f) - vida[j] / 2;
+  return (int16_t)(pos[j] + 0.5f) - largoCuerpo(j) / 2;
 }
 static inline int16_t cuerpoFin(uint8_t j) {
-  return cuerpoIni(j) + vida[j] - 1;
+  return cuerpoIni(j) + largoCuerpo(j) - 1;
 }
 
 // ---------- Sonido ----------
@@ -98,8 +108,8 @@ static void sonarImpacto()          { beep(220, 120); }
 // Traduce el tiempo de carga en alcance y dano. Por debajo de PEL_CARGA_MIN es
 // un toque; de ahi para arriba interpola lineal hasta el tope.
 static int16_t alcanceDeCarga(uint32_t carga, uint8_t* danoSalida) {
-  int16_t corto = (int16_t)PEL_ALCANCE_CORTO;
-  int16_t largo = (int16_t)PEL_ALCANCE_LARGO;
+  int16_t corto = escalaLeds((int16_t)PEL_ALCANCE_CORTO);
+  int16_t largo = escalaLeds((int16_t)PEL_ALCANCE_LARGO);
   if (largo < corto) largo = corto;          // por si el panel web los deja al reves
 
   if (carga < PEL_CARGA_MIN) { *danoSalida = PEL_DANO_CORTO; return corto; }
@@ -127,7 +137,7 @@ static void resolverGolpe(uint8_t j) {
     vida[o] -= (int8_t)dano[j];
     if (vida[o] < 0) vida[o] = 0;
     golpesConectados++;
-    pos[o] += (pos[o] >= pos[j] ? +1.0f : -1.0f) * PEL_EMPUJE;  // reabre la distancia
+    pos[o] += (pos[o] >= pos[j] ? +1.0f : -1.0f) * (float)escalaLeds((int16_t)PEL_EMPUJE);  // reabre la distancia
     sonarImpacto();
   }
 }
@@ -135,11 +145,11 @@ static void resolverGolpe(uint8_t j) {
 static void actualizarPeleador(uint8_t j, uint32_t ahora, float dt) {
   switch (fase[j]) {
     case PEL_LIBRE:
-      pos[j] += leerJoyNorm(j) * (float)PEL_VEL_JUGADOR * dt;
+      pos[j] += leerJoyNorm(j) * (float)escalaVel(PEL_VEL_JUGADOR) * dt;
       if (btnFlanco[j]) {
         fase[j]       = PEL_CARGANDO;
         faseCambio[j] = ahora;
-        alcance[j]    = (int16_t)PEL_ALCANCE_CORTO;
+        alcance[j]    = escalaLeds((int16_t)PEL_ALCANCE_CORTO);
         dano[j]       = PEL_DANO_CORTO;
       }
       break;
@@ -170,15 +180,15 @@ static void actualizarPeleador(uint8_t j, uint32_t ahora, float dt) {
       break;
   }
 
-  if (pos[j] < PEL_PISO_MIN) pos[j] = PEL_PISO_MIN;
-  if (pos[j] > PEL_PISO_MAX) pos[j] = PEL_PISO_MAX;
+  if (pos[j] < pelPisoMin()) pos[j] = pelPisoMin();
+  if (pos[j] > pelPisoMax()) pos[j] = pelPisoMax();
 }
 
 // ---------- Dibujo ----------
 // Suma en vez de pisar: ahora que los cuerpos se atraviesan, el solape se ve
 // como mezcla de colores en vez de hacer desaparecer a uno de los dos.
 static void sumarLed(int16_t i, const CRGB& c) {
-  if (i >= 0 && i < NUM_LEDS) leds[i] += c;
+  if (i >= 0 && i < LARGO_TIRA) leds[i] += c;
 }
 
 // Primero los ataques de todos y despues los cuerpos, para que un golpe que
@@ -231,9 +241,9 @@ static void arrancarPelea() {
     fase[j]       = PEL_LIBRE;
     faseCambio[j] = 0;
     faseDura[j]   = 0;
-    alcance[j]    = (int16_t)PEL_ALCANCE_CORTO;
+    alcance[j]    = escalaLeds((int16_t)PEL_ALCANCE_CORTO);
     dano[j]       = PEL_DANO_CORTO;
-    pos[j]        = PEL_PISO_MIN;
+    pos[j]        = pelPisoMin();
   }
 
   // Repartidos parejo a lo largo de la tira: la primera decision de todos es
@@ -241,8 +251,8 @@ static void arrancarPelea() {
   uint8_t k = 0;
   for (uint8_t j = 0; j < NUM_CONTROLES; j++) {
     if (!jugando[j]) continue;
-    pos[j] = PEL_PISO_MIN +
-             (float)(PEL_PISO_MAX - PEL_PISO_MIN) * (float)k / (float)(numJugadores - 1);
+    pos[j] = pelPisoMin() +
+             (float)(pelPisoMax() - pelPisoMin()) * (float)k / (float)(numJugadores - 1);
     k++;
   }
 
@@ -264,7 +274,7 @@ void loopPelea() {
     uint32_t t = ahora - faseDesde;
     CRGB c = CONTROLES[ganador].color;
     FastLED.clear();
-    for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    for (uint16_t i = 0; i < LARGO_TIRA; i++) {
       if ((i + t / 40) % 4 == 0) leds[i] = c;        // chase del ganador
     }
     if (esRecord) dibujarChispasRecord();

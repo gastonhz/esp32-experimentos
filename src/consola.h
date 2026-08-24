@@ -18,7 +18,16 @@
 
 // ---------- Hardware ----------
 // (ver scripts-y-pruebas/setup-hardware-maquina-juegos-led.md)
-#define NUM_LEDS    100
+// La tira puede ser la corta de 100 LEDs o la larga de 200, y con la larga
+// puesta se puede usar igual solo el primer tramo (los primeros 100 desde el
+// extremo de datos). Cual se usa se elige en Ajustes y queda guardado en NVS.
+//
+// LEDS_MAX dimensiona los buffers: siempre la tira mas larga posible, porque el
+// array no se puede redimensionar en caliente. LARGO_TIRA es lo que la consola
+// usa AHORA, y es una VARIABLE: ningun juego puede cachearla en una constante
+// de archivo, tiene que leerla cada vez (o al empezar la partida).
+#define LEDS_MAX    200         // tira fisica mas larga que se puede enchufar
+extern uint16_t LARGO_TIRA;     // 100 o 200: lo que se usa ahora
 #define DATA_PIN    16          // -> SN74AHCT125N -> 470ohm -> DIN de la tira
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
@@ -64,8 +73,39 @@
 #define LCD_SCL  22
 
 // ---------- Tira ----------
-extern CRGB    leds[NUM_LEDS];
+extern CRGB    leds[LEDS_MAX];
 extern uint16_t BRILLO;         // techo de seguridad de corriente (tuneable por web)
+
+// ---------- Ajustes de la consola ----------
+// Lo que depende de como esta montada la tira y antes obligaba a recompilar. Se
+// cambian en la entrada "Ajustes" del selector y desde el panel web. El largo y
+// la orientacion se guardan en NVS --son hardware, no tiene sentido volver a
+// configurarlos en cada encendido--; el silencio NO, vuelve a "no" al apagar.
+enum Orientacion { TIRA_VERTICAL,      // parada: el stick de arriba a abajo corre la tira
+                   TIRA_HORIZONTAL };  // acostada: la corre el de izquierda a derecha
+extern uint8_t ORIENTACION;
+extern bool    SILENCIO;               // mute global
+
+// Lee lo guardado y deja LARGO_TIRA, ORIENTACION y BRILLO listos. Va ANTES de
+// FastLED.addLeds(), que necesita el largo ya resuelto.
+void iniciarAjustes();
+void ponerLargoTira(uint16_t largo);   // 100 o 200: apaga la cola, avisa a FastLED y guarda
+void ponerOrientacion(uint8_t orient);
+void ponerSilencio(bool s);            // corta en seco lo que este sonando
+
+// ---------- Escala de los juegos ----------
+// Las constantes de los juegos estan tuneadas para una tira de 100 LEDs. Los
+// juegos PROPORCIONALES (Pong, Paddle, Stacker, Alunizaje, Reaccion, Pelea y
+// Tiros) las pasan por estas funciones: en la tira larga todo mide el doble y
+// la partida se siente igual, solo mas grande.
+//
+// Los juegos donde el largo ES el juego NO las usan, a proposito: en Carrera,
+// Tira y Afloja, Rompecolores, Salta Muros, Twang y Ambiente, 200 LEDs son el
+// doble de pista, de muro, de mazmorra o de tira que empujar. Por eso mismo
+// esos guardan un record por cada largo (ver RecordDef::porLargo).
+int16_t  escalaLeds(int16_t leds100);      // tamanos y distancias, en LEDs
+uint16_t escalaVel(uint16_t ledsPorSeg);   // velocidades en LEDs/s
+uint16_t escalaMsPorLed(uint16_t ms);      // periodos en ms por LED: cruzar tarda lo mismo
 
 // ---------- Colores compartidos ----------
 #define COL_PELOTA  CRGB::White
@@ -240,6 +280,11 @@ struct RecordDef {
   const char* prefijo;      // texto antes del numero  ("Nivel ")
   const char* unidad;       // texto despues del numero (" golpes"), con su espacio
   bool        menorEsMejor; // para records de tiempo: gana el valor mas chico
+  // Los juegos donde el largo de la tira ES el juego guardan un record por cada
+  // tira: una vuelta de Carrera en 200 LEDs no se puede comparar con una de 100,
+  // y en Salta Muros o Rompecolores el numero mide otra cosa. Los demas usan el
+  // mismo record en las dos, porque escalan y se juegan igual.
+  bool        porLargo;
 };
 
 // Sin el tamano a proposito: asi el static_assert de consola.cpp es el que
@@ -250,6 +295,9 @@ extern const RecordDef RECORDS[];
 extern uint32_t hsValor[NUM_RECORDS];
 
 void   iniciarRecords();
+// Los records por largo hay que traerlos de nuevo de la NVS al cambiar de tira.
+// Lo llama ponerLargoTira(); ningun juego necesita saber que existe.
+void   recargarRecords();
 // El `jugador` es el control al que le pertenece el record: el que lo hizo, o el
 // que gano la partida cuando el numero es de todos (los golpes de un peloteo de
 // Pong los ponen los dos). Es quien despues firma con su propio control, asi que
@@ -272,6 +320,14 @@ uint8_t jugadorPendiente();     // que control lo hizo, y por lo tanto lo firma
 void   ponerNombreRecord(uint8_t rec, const char* nombre);  // graba y cierra el pendiente
 void   cancelarNombreRecord();        // se va sin iniciales: el valor ya quedo grabado
 
+// ---------- Guardado generico en NVS ----------
+// Para lo que no es un record ni un ajuste de la consola: hoy, la pista fija de
+// Carrera. La NVS la abre consola.cpp y el objeto Preferences no se expone, asi
+// que todo lo que se guarde pasa por aca. Devuelven los bytes escritos/leidos
+// (0 si la clave no existe todavia).
+size_t guardarBlob(const char* clave, const void* datos, size_t n);
+size_t leerBlob(const char* clave, void* datos, size_t n);
+
 // ---------- Pantallas y juegos ----------
 // NOMBRE es la pantallita de las tres letras: no es un juego ni una entrada del
 // selector, se cuela sola entre el fin de una partida con record y el menu.
@@ -293,7 +349,7 @@ struct JuegoDef {
 enum Juego { JUEGO_PONG, JUEGO_TUG, JUEGO_ROMPECOLORES, JUEGO_TWANG,
              JUEGO_PADDLE, JUEGO_STACKER, JUEGO_ESQUIVA, JUEGO_LANDER, JUEGO_DUELO,
              JUEGO_CARRERA, JUEGO_PELEA, JUEGO_WESTERN,
-             JUEGO_AMBIENTE, JUEGO_HIGHSCORES, JUEGO_IP, NUM_JUEGOS };
+             JUEGO_AMBIENTE, JUEGO_HIGHSCORES, JUEGO_AJUSTES, NUM_JUEGOS };
 
 // Idem RECORDS: el tamano lo chequea el static_assert de main.cpp. Una fila de
 // menos aca serian punteros a funcion nulos y la consola se reiniciaria al

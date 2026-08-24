@@ -16,6 +16,10 @@
 #include "juego_paddle.h"
 
 // ---------- Parametros ----------
+// Juego PROPORCIONAL: lo que esta en LEDs, en LEDs/s o en ms por LED vale para
+// una tira de 100 y se pasa por escala*() al usarlo, asi en la tira larga todo
+// crece junto y la partida se siente igual. Los numeros de aca y los del panel
+// web siempre hablan de una tira de 100, este puesta la que este.
 uint16_t PAD_VEL_JUGADOR = 55;   // LEDs por segundo de la paleta
 uint16_t PAD_LARGO_INI   = 10;   // largo de la paleta al empezar (LEDs)
 uint16_t PAD_ACHICA_CADA = 4;    // cada cuantos golpes se acorta la paleta
@@ -26,7 +30,9 @@ const uint16_t PAD_VEL_RAPIDA = 28;   // pelota mas rapida, pote al maximo (ms p
 const uint16_t PAD_VEL_MINIMA = 12;   // piso de aceleracion (ms por LED)
 const uint16_t PAD_ACELERA    = 2;    // cuanto baja el intervalo por cada golpe
 const uint8_t  PAD_VIDAS      = 3;
-const int16_t  PAD_TOPE       = NUM_LEDS - 14;  // la paleta no puede pegarse a la pared:
+// Depende del largo de la tira, que ahora se elige en Ajustes: va como funcion
+// y no como constante de archivo, que se calcularia una sola vez al encender.
+static int16_t padTope() { return LARGO_TIRA - escalaLeds(14); }  // la paleta no puede pegarse a la pared:
                                                 // sin viaje no hay juego
 const uint16_t PAD_PERDIDA_MS = 1200; // parpadeo rojo al perder una vida
 const uint16_t PAD_FIN_MS     = 3200;
@@ -64,7 +70,7 @@ static uint32_t falloDesde;      // millis() del ultimo golpe al aire: la paleta
 // ---------- Sonido ----------
 static const Nota JINGLE_FIN[] = { {440, 170}, {370, 170}, {294, 170}, {196, 520} };
 
-static void sonarGolpe()    { beep(1100 + (PAD_VEL_LENTA - pelotaVel) * 12, 30); }
+static void sonarGolpe()    { beep(1100 + (escalaMsPorLed(PAD_VEL_LENTA) - pelotaVel) * 12, 30); }
 static void sonarAlAire()   { beep( 300, 55); }   // grave y feo: erraste y quedaste vendido
 static void sonarPared()    { beep(1800, 20); }
 static void sonarFallo()    { beep( 150, 260); }
@@ -77,7 +83,7 @@ static int16_t paletaFin() { return paletaIni() + paletaLargo - 1; }
 // El bonus por altura es lo que le da sentido al joystick: mantener la paleta
 // arriba es incomodo y rinde hasta 4 veces mas por golpe.
 static uint8_t valorDelGolpe() {
-  return 1 + (uint8_t)(paletaCentro / 25.0f);   // 1 abajo del todo, 4 cerca del tope
+  return 1 + (uint8_t)(paletaCentro / (float)escalaLeds(25));   // 1 abajo del todo, 4 cerca del tope
 }
 
 // Saca de nuevo desde la paleta hacia la pared, sin tocar vidas ni score.
@@ -92,9 +98,9 @@ static void prepararSaque() {
 
 void nuevoPaddle() {
   calibrarJoy(0);
-  velInicial   = map(leerPoteCrudo(), 0, 4095, PAD_VEL_LENTA, PAD_VEL_RAPIDA);
+  velInicial   = escalaMsPorLed(map(leerPoteCrudo(), 0, 4095, PAD_VEL_LENTA, PAD_VEL_RAPIDA));
   paletaCentro = 12;
-  paletaLargo  = PAD_LARGO_INI;
+  paletaLargo  = escalaLeds(PAD_LARGO_INI);
   vidas        = PAD_VIDAS;
   golpes       = 0;
   score        = 0;
@@ -119,9 +125,9 @@ static void moverPaleta() {
   float dt = (ahora - ultimoFrame) / 1000.0f;
   ultimoFrame = ahora;
 
-  paletaCentro += leerJoyNorm(0) * PAD_VEL_JUGADOR * dt;
+  paletaCentro += leerJoyNorm(0) * escalaVel(PAD_VEL_JUGADOR) * dt;
   float minimo = paletaLargo / 2.0f;
-  float maximo = (float)PAD_TOPE;
+  float maximo = (float)padTope();
   if (paletaCentro < minimo) paletaCentro = minimo;
   if (paletaCentro > maximo) paletaCentro = maximo;
 }
@@ -129,7 +135,7 @@ static void moverPaleta() {
 // ---------- Dibujo ----------
 static void dibujarEscena() {
   FastLED.clear();
-  setLed(NUM_LEDS - 1, COL_PARED);
+  setLed(LARGO_TIRA - 1, COL_PARED);
 
   // Tres estados en el mismo color: blanco justo despues de acertar, rojo
   // apagado mientras esta muerta por haber errado, verde el resto del tiempo.
@@ -146,7 +152,7 @@ void loopPaddle() {
   if (estadoPad == PAD_FIN) {
     // Derrota: barrido que se apaga desde la pared hacia la base, y al menu.
     uint32_t t = ahora - faseDesde;
-    int16_t  frente = NUM_LEDS - 1 - (int16_t)(t / 25);
+    int16_t  frente = LARGO_TIRA - 1 - (int16_t)(t / 25);
     FastLED.clear();
     for (int16_t i = 0; i <= frente; i++) setLed(i, CRGB(60, 0, 0));
     if (esRecord) dibujarChispasRecord();
@@ -192,12 +198,17 @@ void loopPaddle() {
     bool enVentana = (pelotaDir == -1 && pelotaPos >= paletaIni() && pelotaPos <= paletaFin());
     if (enVentana && (ahora - falloDesde) >= PAD_FALLO_MS) {
       pelotaDir   = +1;
-      pelotaVel   = max<int>(PAD_VEL_MINIMA, pelotaVel - PAD_ACELERA);
+      pelotaVel   = max<int>(escalaMsPorLed(PAD_VEL_MINIMA), pelotaVel - escalaMsPorLed(PAD_ACELERA));
       golpes++;
       score      += valorDelGolpe();
       brilloGolpe = ahora;
       sonarGolpe();
-      if (golpes % PAD_ACHICA_CADA == 0 && paletaLargo > PAD_LARGO_MIN) paletaLargo--;
+      // La paleta se achica un LED por golpe en la tira corta y dos en la larga:
+      // si no, en 200 LEDs tardaria el doble de golpes en volverse dificil.
+      int16_t largoMin = escalaLeds(PAD_LARGO_MIN);
+      if (golpes % PAD_ACHICA_CADA == 0 && paletaLargo > largoMin) {
+        paletaLargo = (uint8_t)max<int16_t>(largoMin, (int16_t)paletaLargo - escalaLeds(1));
+      }
     } else if (!enVentana) {
       falloDesde = ahora;                 // golpe al aire: la paleta queda muerta un rato
       sonarAlAire();
@@ -209,8 +220,8 @@ void loopPaddle() {
     ultimoPaso += pelotaVel;
     pelotaPos  += pelotaDir;
 
-    if (pelotaPos >= NUM_LEDS - 1) {     // rebote en la pared del fondo
-      pelotaPos = NUM_LEDS - 1;
+    if (pelotaPos >= LARGO_TIRA - 1) {     // rebote en la pared del fondo
+      pelotaPos = LARGO_TIRA - 1;
       pelotaDir = -1;
       sonarPared();
     } else if (pelotaPos < 0) {          // se escapo por abajo: vida perdida

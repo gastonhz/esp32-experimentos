@@ -118,8 +118,11 @@ static String bloqueVivo() {
   h += "<h2>Records</h2><ul>";
   for (uint8_t i = 0; i < NUM_RECORDS; i++) {
     String firma = String(hsNombre[i]);
+    // Los que dependen del largo tienen un record por tira: sin decir cual es,
+    // el numero no se entiende (y en el LCD no hay columnas para aclararlo).
+    String tira = RECORDS[i].porLargo ? (" <small>(tira " + String(LARGO_TIRA) + ")</small>") : "";
     h += "<li>" + String(RECORDS[i].nombre) + ": " + textoRecord(i) +
-         (firma.length() ? (" <b>" + firma + "</b>") : "") + "</li>";
+         (firma.length() ? (" <b>" + firma + "</b>") : "") + tira + "</li>";
   }
   h += "</ul>";
   return h;
@@ -127,7 +130,7 @@ static String bloqueVivo() {
 
 static String paginaHtml() {
   String h;
-  h.reserve(9000);
+  h.reserve(13000);
   h += "<!DOCTYPE html><html><head><meta charset=\"utf-8\">";
   h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
   h += "<title>PixeLED</title></head>";
@@ -136,6 +139,54 @@ static String paginaHtml() {
 
   // --- Estado en vivo (lo repinta el script del final) ---
   h += "<div id=\"vivo\">" + bloqueVivo() + "</div>";
+
+  // --- Ajustes de la consola ---
+  // Van en un formulario aparte y con desplegables porque no son numeros a
+  // tunear sino opciones cerradas, y porque cambiar el largo no es escribir una
+  // variable: apaga la cola de la tira, avisa a FastLED, pisa el brillo y trae
+  // de la NVS los records de esa tira. Son los mismos tres ajustes de la
+  // entrada "Ajustes" del selector.
+  h += "<h2>Consola</h2><form method=\"GET\" action=\"/set\">";
+  h += "<label>Largo de la tira: <select name=\"largoTira\">";
+  h += String("<option value=\"100\"") + (LARGO_TIRA < 200 ? " selected" : "") + ">100 LEDs</option>";
+  h += String("<option value=\"200\"") + (LARGO_TIRA >= 200 ? " selected" : "") + ">200 LEDs</option>";
+  h += "</select></label><br>";
+  h += "<label>Orientacion: <select name=\"orient\">";
+  h += String("<option value=\"0\"") + (ORIENTACION == TIRA_VERTICAL ? " selected" : "") + ">vertical (parada)</option>";
+  h += String("<option value=\"1\"") + (ORIENTACION == TIRA_HORIZONTAL ? " selected" : "") + ">horizontal (acostada)</option>";
+  h += "</select></label><br>";
+  h += "<label>Silenciar: <select name=\"silencio\">";
+  h += String("<option value=\"0\"") + (!SILENCIO ? " selected" : "") + ">no</option>";
+  h += String("<option value=\"1\"") + (SILENCIO ? " selected" : "") + ">si</option>";
+  h += "</select></label><br>";
+  h += "<p><input type=\"submit\" value=\"Aplicar\"></p></form>";
+
+  // --- Pista de Carrera dibujada a mano ---
+  // Ocho filas fijas en vez de un campo de texto: en el celular saltan los
+  // teclados numericos y no hay sintaxis que equivocar. Las ocho van SIEMPRE en
+  // la query, asi que poner una fila en "--" es como se borra un tramo.
+  h += "<h2>Pista de Carrera</h2><form method=\"GET\" action=\"/set\">";
+  h += "<p><small>Posiciones en LEDs, de 0 a " + String(LARGO_TIRA - 1) +
+       ". Las filas en \"--\" no cuentan; con las ocho vacias cada carrera sortea "
+       "sus cuestas como siempre.</small></p>";
+  for (uint8_t k = 0; k < CAR_MAX_TRAMOS; k++) {
+    String n     = String(k);
+    // Se muestran los numeros aunque la fila este en "--": si alguien cargo el
+    // tramo y se olvido de elegir subida o bajada, al volver los encuentra ahi
+    // en vez de tener que tipearlos de nuevo.
+    bool   usado = (CAR_PISTA[k].tipo != TRAMO_NADA || CAR_PISTA[k].fin != 0);
+    h += "<label>" + String(k + 1) + ": ";
+    h += "<input type=\"number\" min=\"0\" style=\"width:4.5em\" name=\"pt" + n + "i\" value=\"" +
+         (usado ? String(CAR_PISTA[k].ini) : String("")) + "\"> a ";
+    h += "<input type=\"number\" min=\"0\" style=\"width:4.5em\" name=\"pt" + n + "f\" value=\"" +
+         (usado ? String(CAR_PISTA[k].fin) : String("")) + "\"> ";
+    h += "<select name=\"pt" + n + "t\">";
+    h += String("<option value=\"0\"") + (CAR_PISTA[k].tipo == TRAMO_NADA   ? " selected" : "") + ">--</option>";
+    h += String("<option value=\"1\"") + (CAR_PISTA[k].tipo == TRAMO_SUBIDA ? " selected" : "") + ">subida</option>";
+    h += String("<option value=\"2\"") + (CAR_PISTA[k].tipo == TRAMO_BAJADA ? " selected" : "") + ">bajada</option>";
+    h += "</select></label><br>";
+  }
+  h += "<p><input type=\"submit\" value=\"Guardar pista\"></p></form>";
 
   // --- Parametros tuneables en caliente ---
   h += "<h2>Parametros</h2><form method=\"GET\" action=\"/set\">";
@@ -186,6 +237,36 @@ void iniciarPanelWeb() {
   });
 
   server.on("/set", HTTP_GET, [](AsyncWebServerRequest* request) {
+    // Los ajustes van primero: cambiar el largo pisa el brillo con el que le
+    // corresponde a esa tira, y asi un brillo que venga en la MISMA query
+    // (imposible hoy, son dos formularios) seguiria ganando.
+    if (request->hasParam("largoTira")) {
+      ponerLargoTira((uint16_t)request->getParam("largoTira")->value().toInt());
+    }
+    if (request->hasParam("orient")) {
+      ponerOrientacion((uint8_t)request->getParam("orient")->value().toInt());
+    }
+    if (request->hasParam("silencio")) {
+      ponerSilencio(request->getParam("silencio")->value().toInt() != 0);
+    }
+
+    // La pista viene entera o no viene: alcanza con mirar si llego la primera
+    // fila para saber que el formulario que se aplico es el de la pista.
+    if (request->hasParam("pt0t")) {
+      for (uint8_t k = 0; k < CAR_MAX_TRAMOS; k++) {
+        String base = "pt" + String(k);
+        uint16_t ini = request->hasParam(base + "i") ? (uint16_t)request->getParam(base + "i")->value().toInt() : 0;
+        uint16_t fin = request->hasParam(base + "f") ? (uint16_t)request->getParam(base + "f")->value().toInt() : 0;
+        uint8_t  tip = request->hasParam(base + "t") ? (uint8_t)request->getParam(base + "t")->value().toInt()  : 0;
+        if (tip > TRAMO_BAJADA) tip = TRAMO_NADA;
+        if (ini > fin) { uint16_t x = ini; ini = fin; fin = x; }   // cargado al reves: se ordena
+        CAR_PISTA[k].ini  = ini;
+        CAR_PISTA[k].fin  = fin;
+        CAR_PISTA[k].tipo = tip;
+      }
+      guardarPistaCarrera();
+    }
+
     for (uint8_t i = 0; i < NUM_PARAMS; i++) {
       if (request->hasParam(PARAMS[i].clave)) {
         *PARAMS[i].valor = request->getParam(PARAMS[i].clave)->value().toInt();

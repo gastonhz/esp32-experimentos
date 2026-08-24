@@ -16,6 +16,11 @@
 #include "juego_pong.h"
 
 // ---------- Parametros ----------
+// Pong es de los juegos PROPORCIONALES: todo lo que esta en LEDs, en LEDs/s o en
+// ms por LED vale para una tira de 100 y se pasa por escala*() al usarlo, asi en
+// la tira larga la cancha, las paletas y la pelota crecen juntas y el peloteo se
+// siente igual. Los valores de esta tabla y los del panel web siempre hablan de
+// una tira de 100, aunque este puesta la de 200.
 uint16_t       VEL_LENTA    = 90;   // saque mas lento, pote al minimo (ms por LED)
 uint16_t       VEL_RAPIDA   = 24;   // saque mas rapido, pote al maximo (ms por LED)
 uint16_t       VEL_ACELERA  = 4;    // cuanto baja el intervalo por cada golpe
@@ -26,15 +31,17 @@ const uint8_t  PON_LARGO_MIN = 3;    // piso por si el panel web lo deja en cero
 const uint16_t VEL_MINIMA   = 16;   // piso de aceleracion (ms por LED)
 const uint8_t  PUNTOS_GANAR = 5;
 
-// La frontera: P1 se mueve en [0, MITAD-1] y P2 en [MITAD, NUM_LEDS-1].
-const int16_t  PON_MITAD = NUM_LEDS / 2;
+// La frontera: P1 se mueve en [0, MITAD-1] y P2 en [MITAD, LARGO_TIRA-1].
+// Depende del largo de la tira, que ahora se elige en Ajustes: va como funcion
+// y no como constante de archivo, que se calcularia una sola vez al encender.
+static int16_t ponMitad() { return LARGO_TIRA / 2; }
 
 // ---------- Estado ----------
 enum Estado { SACANDO, JUGANDO, PUNTO, FIN };
 static Estado   estado;
 static uint32_t estadoDesde;   // millis() en que entramos al estado actual
 
-static int16_t  pelotaPos;     // 0..NUM_LEDS-1
+static int16_t  pelotaPos;     // 0..LARGO_TIRA-1
 static int8_t   pelotaDir;     // +1 hacia P2 (final), -1 hacia P1 (inicio)
 static uint16_t pelotaVel;     // ms por paso actual
 static uint32_t ultimoPaso;    // millis() del ultimo movimiento
@@ -51,7 +58,7 @@ static bool     esRecord;      // solo tiene sentido con ganador != 0
 
 // ---------- Geometria de la paleta ----------
 static inline int16_t paletaLargo() {
-  return (int16_t)max<uint16_t>(PON_LARGO_MIN, PON_PALETA_LARGO);
+  return escalaLeds((int16_t)max<uint16_t>(PON_LARGO_MIN, PON_PALETA_LARGO));
 }
 static inline int16_t paletaIni(uint8_t j) {
   return (int16_t)(paletaCentro[j] + 0.5f) - paletaLargo() / 2;
@@ -66,9 +73,9 @@ static void limitarPaletas() {
   int16_t largo = paletaLargo();
   int16_t off   = largo / 2;                 // el mismo que aplica paletaIni()
   float min0 = (float)off;
-  float max0 = (float)(PON_MITAD - 1 - (largo - 1) + off);
-  float min1 = (float)(PON_MITAD + off);
-  float max1 = (float)(NUM_LEDS - 1 - (largo - 1) + off);
+  float max0 = (float)(ponMitad() - 1 - (largo - 1) + off);
+  float min1 = (float)(ponMitad() + off);
+  float max1 = (float)(LARGO_TIRA - 1 - (largo - 1) + off);
   if (max0 < min0) max0 = min0;
   if (max1 < min1) max1 = min1;
 
@@ -85,7 +92,7 @@ static void moverPaletas() {
   if (dt > 0.1f) dt = 0.1f;
 
   for (uint8_t j = 0; j < 2; j++) {
-    paletaCentro[j] += leerJoyNorm(j) * (float)PON_VEL_PALETA * dt;
+    paletaCentro[j] += leerJoyNorm(j) * (float)escalaVel(PON_VEL_PALETA) * dt;
   }
   limitarPaletas();
 }
@@ -101,7 +108,7 @@ static bool alAlcance(uint8_t j) {
 static const Nota JINGLE_PUNTO[] = { {494, 120}, {330, 180} };   // descendente
 
 static void sonarGolpe() {                  // agudo, sube con la velocidad de la pelota
-  beep(1000 + (VEL_LENTA - pelotaVel) * 10, 30);
+  beep(1000 + (escalaMsPorLed(VEL_LENTA) - pelotaVel) * 10, 30);
 }
 static void sonarSaque() { beep(900, 45); }
 static void sonarPunto() { tocarJingle(JINGLE_PUNTO, 2); }
@@ -111,7 +118,7 @@ static void sonarPunto() { tocarJingle(JINGLE_PUNTO, 2); }
 // LEDs azules desde el final.
 static void dibujarMarcador() {
   for (uint8_t i = 0; i < puntosP1; i++) setLed(i, COL_P1);
-  for (uint8_t i = 0; i < puntosP2; i++) setLed(NUM_LEDS - 1 - i, COL_P2);
+  for (uint8_t i = 0; i < puntosP2; i++) setLed(LARGO_TIRA - 1 - i, COL_P2);
 }
 
 // La paleta se enciende a pleno cuando la pelota esta adentro: ese destello es
@@ -168,12 +175,12 @@ void nuevoPong() {
   ganador       = 0;
   golpesTotales = 0;
   esRecord      = false;
-  velSaque      = map(leerPoteCrudo(), 0, 4095, VEL_LENTA, VEL_RAPIDA);
+  velSaque      = escalaMsPorLed(map(leerPoteCrudo(), 0, 4095, VEL_LENTA, VEL_RAPIDA));
   ultimoFrame   = millis();
 
   // Cada uno arranca pegado a su pared, que es la posicion defensiva.
   paletaCentro[0] = 0;
-  paletaCentro[1] = NUM_LEDS - 1;
+  paletaCentro[1] = LARGO_TIRA - 1;
   limitarPaletas();
 
   prepararSaque();
@@ -183,7 +190,7 @@ void nuevoPong() {
 static void loopSacando() {
   // El pote se sigue leyendo hasta el momento del saque: lo que muestra el LCD
   // es lo que va a salir.
-  velSaque  = map(leerPoteCrudo(), 0, 4095, VEL_LENTA, VEL_RAPIDA);
+  velSaque  = escalaMsPorLed(map(leerPoteCrudo(), 0, 4095, VEL_LENTA, VEL_RAPIDA));
   pelotaVel = velSaque;
 
   // Las paletas ya se mueven: los dos se acomodan antes de que salga la pelota.
@@ -215,7 +222,7 @@ static void loopJugando() {
   for (uint8_t j = 0; j < 2; j++) {
     if (!btnFlanco[j] || !alAlcance(j)) continue;
     pelotaDir = (j == 0) ? +1 : -1;
-    pelotaVel = max<int>(VEL_MINIMA, pelotaVel - VEL_ACELERA);
+    pelotaVel = max<int>(escalaMsPorLed(VEL_MINIMA), pelotaVel - escalaMsPorLed(VEL_ACELERA));
     golpesTotales++;
     sonarGolpe();
   }
@@ -232,7 +239,7 @@ static void loopJugando() {
       terminarPunto();
       return;
     }
-    if (pelotaPos > NUM_LEDS - 1) {   // se escapo por P2 -> punto de P1
+    if (pelotaPos > LARGO_TIRA - 1) {   // se escapo por P2 -> punto de P1
       puntosP1++;
       ganador = (puntosP1 >= PUNTOS_GANAR) ? 1 : 0;
       saca = 2;
@@ -252,7 +259,7 @@ static void loopPunto() {
   // Parpadeo en el color del que sumo, ~1.2 s, y a sacar de nuevo.
   CRGB c = (saca == 1) ? COL_P2 : COL_P1;   // sumo el rival del que saca
   bool on = (millis() / 150) % 2 == 0;
-  fill_solid(leds, NUM_LEDS, on ? c : CRGB::Black);
+  fill_solid(leds, LARGO_TIRA, on ? c : CRGB::Black);
   dibujarMarcador();
   FastLED.show();
 
@@ -264,7 +271,7 @@ static void loopFin() {
   CRGB c = CONTROLES[ganador - 1].color;
   uint16_t t = (millis() - estadoDesde);
   FastLED.clear();
-  for (uint8_t i = 0; i < NUM_LEDS; i++) {
+  for (uint16_t i = 0; i < LARGO_TIRA; i++) {
     if ((i + t / 40) % 4 == 0) leds[i] = c;   // chase
   }
   if (esRecord) dibujarChispasRecord();       // chispeo dorado ENCIMA del festejo normal
@@ -288,7 +295,7 @@ void lcdPong() {
   String m;
   switch (estado) {
     case SACANDO: {                       // muestra el nivel de velocidad del pote
-      uint8_t nivel = map(velSaque, VEL_LENTA, VEL_RAPIDA, 1, 9);
+      uint8_t nivel = map(velSaque, escalaMsPorLed(VEL_LENTA), escalaMsPorLed(VEL_RAPIDA), 1, 9);
       m = String(saca == 1 ? "Saca Verde v" : "Saca Azul v") + nivel;
       break;
     }

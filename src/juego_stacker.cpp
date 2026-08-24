@@ -16,6 +16,11 @@
 #include "juego_stacker.h"
 
 // ---------- Parametros ----------
+// Juego PROPORCIONAL: lo que esta en LEDs, en LEDs/s o en ms por LED vale para
+// una tira de 100 y se pasa por escala*() al usarlo, asi en la tira larga todo
+// crece junto y la partida se siente igual. Los numeros de aca y los del panel
+// web siempre hablan de una tira de 100, este puesta la que este.
+// STK_PISOS no escala: los pisos son de la torre, no de la tira.
 uint16_t STK_ANCHO_INI = 12;   // LEDs del bloque en el piso 1
 uint16_t STK_PISOS     = 15;   // pisos para ganar la partida
 
@@ -55,15 +60,15 @@ static void sonarGanar()    { tocarJingle(JINGLE_GANAR, 5); }
 static uint8_t anchoActual() { return apoyoFin - apoyoIni + 1; }
 
 void nuevoStacker() {
-  uint8_t ancho = STK_ANCHO_INI;
+  uint8_t ancho = (uint8_t)escalaLeds(STK_ANCHO_INI);
   // El primer apoyo es un bloque del ancho inicial en el centro de la tira: la
   // base de la torre. El bloque del piso 1 sale del extremo y ya hay que
   // alinearlo contra ella, no hay piso de regalo.
-  apoyoIni   = (NUM_LEDS - ancho) / 2;
+  apoyoIni   = (LARGO_TIRA - ancho) / 2;
   apoyoFin   = apoyoIni + ancho - 1;
   bloqueIni  = 0;
   bloqueDir  = +1;
-  velPaso    = map(leerPoteCrudo(), 0, 4095, STK_VEL_LENTA, STK_VEL_RAPIDA);
+  velPaso    = escalaMsPorLed(map(leerPoteCrudo(), 0, 4095, STK_VEL_LENTA, STK_VEL_RAPIDA));
   ultimoPaso = millis();
   piso       = 0;
   esRecord   = false;
@@ -104,9 +109,9 @@ static void fijarBloque() {
 
   // Cada piso se desliza un poco mas rapido, y el bloque nuevo entra por la
   // punta mas lejana al apoyo para que siempre haya que cruzar algo de tira.
-  velPaso = max<int>(STK_VEL_MINIMA, (velPaso * 92) / 100);
-  if (apoyoIni > NUM_LEDS / 2) { bloqueIni = 0;                        bloqueDir = +1; }
-  else                         { bloqueIni = NUM_LEDS - anchoActual(); bloqueDir = -1; }
+  velPaso = max<int>(escalaMsPorLed(STK_VEL_MINIMA), (velPaso * 92) / 100);
+  if (apoyoIni > LARGO_TIRA / 2) { bloqueIni = 0;                        bloqueDir = +1; }
+  else                         { bloqueIni = LARGO_TIRA - anchoActual(); bloqueDir = -1; }
   ultimoPaso = millis();
 }
 
@@ -129,7 +134,7 @@ void loopStacker() {
   if (estadoStk == STK_GANADO) {
     // Victoria: arcoiris que recorre la tira entera.
     uint32_t t = ahora - faseDesde;
-    fill_rainbow(leds, NUM_LEDS, (uint8_t)(t / 8), 4);
+    fill_rainbow(leds, LARGO_TIRA, (uint8_t)(t / 8), 4);
     if (esRecord) dibujarChispasRecord();
     FastLED.show();
     if (t > STK_GANAR_MS) volverAlMenu();
@@ -141,7 +146,7 @@ void loopStacker() {
     ultimoPaso += velPaso;
     bloqueIni  += bloqueDir;
     if (bloqueIni <= 0)                        { bloqueIni = 0;                        bloqueDir = +1; }
-    if (bloqueIni >= NUM_LEDS - anchoActual()) { bloqueIni = NUM_LEDS - anchoActual(); bloqueDir = -1; }
+    if (bloqueIni >= LARGO_TIRA - anchoActual()) { bloqueIni = LARGO_TIRA - anchoActual(); bloqueDir = -1; }
   }
 
   if (btnFlanco[0]) { fijarBloque(); return; }

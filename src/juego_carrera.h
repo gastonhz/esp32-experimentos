@@ -18,3 +18,34 @@ extern uint16_t CAR_VUELTAS_MIN;  // vueltas con el pote al minimo
 extern uint16_t CAR_VUELTAS_MAX;  // vueltas con el pote al maximo
 extern uint16_t CAR_MESETA_MIN;   // llano mas corto en la cima de una cuesta (LEDs)
 extern uint16_t CAR_MESETA_MAX;   // llano mas largo en la cima (LEDs)
+
+// ---------- Pista fija ----------
+// La pista se puede dibujar a mano desde el panel web, en LEDs absolutos: la
+// idea es llevar la tira a algun lado, pegarla siguiendo una escalera o una
+// baranda y marcar donde quedaron las subidas y bajadas de verdad.
+//
+// Mientras no haya ningun tramo cargado, cada carrera sortea sus cuestas como
+// siempre. Con uno o mas, se usa exactamente lo cargado y no se sortea nada:
+// un solo tramo de 0 al ultimo LED es una tira entera en subida, y vale.
+//
+// Es UNA pista para las dos tiras: como las posiciones son absolutas, con la
+// tira corta puesta lo que caiga mas alla del ultimo LED se recorta.
+#define CAR_MAX_TRAMOS 8
+
+enum TipoTramo { TRAMO_NADA, TRAMO_SUBIDA, TRAMO_BAJADA };
+
+struct TramoPista {
+  uint16_t ini;    // primer LED del tramo, incluido
+  uint16_t fin;    // ultimo LED del tramo, incluido
+  uint8_t  tipo;   // TipoTramo; TRAMO_NADA = fila vacia
+};
+extern TramoPista CAR_PISTA[CAR_MAX_TRAMOS];
+
+void iniciarPistaCarrera();     // la trae de la NVS al encender
+void guardarPistaCarrera();     // la graba (la llama el panel web al aplicar)
+bool hayPistaFija();            // false = cada carrera sortea sus cuestas
+uint8_t tramosCargados();       // cuantos tramos validos hay, para mostrarlo
+
+// Pinta los tramos cargados sobre lo que ya haya en la tira, a pleno brillo.
+// Lo usa la pantalla de Ajustes para verificar la pista sin entrar a jugar.
+void dibujarPistaCargada();

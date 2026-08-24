@@ -45,6 +45,12 @@ const uint16_t CAR_FIN_MS     = 4000;
 const uint8_t  CAR_ESTELA     = 2;     // largo de la cola de cada auto
 const int16_t  CAR_MARGEN     = 8;     // LEDs llanos garantizados en la largada
 
+// En la carrera el terreno va tenue para no competir con los autos. En la
+// pantalla de Ajustes, en cambio, la pista ES lo que se esta mirando, y muchas
+// veces desde el otro lado de la habitacion: ahi se dibuja a pleno.
+static const CRGB COL_SUBIDA_VER = CRGB(255,  76,   0);
+static const CRGB COL_BAJADA_VER = CRGB(  0, 190,  50);
+
 static const CRGB COL_SUBIDA = CRGB(60, 18, 0);   // tenue: es terreno, no un objeto
 static const CRGB COL_BAJADA = CRGB( 0, 45, 12);
 
@@ -55,7 +61,7 @@ static uint32_t  faseDesde;
 
 static bool     jugando[NUM_CONTROLES];   // controles que largaron esta carrera
 static uint8_t  numJugadores;
-static float    pos[NUM_CONTROLES];       // posicion continua dentro de la vuelta (0..NUM_LEDS)
+static float    pos[NUM_CONTROLES];       // posicion continua dentro de la vuelta (0..LARGO_TIRA)
 static float    vel[NUM_CONTROLES];       // LEDs/s, nunca negativa: los autos no van marcha atras
 static uint8_t  vueltas[NUM_CONTROLES];
 static uint32_t vueltaDesde[NUM_CONTROLES];  // millis() en que empezo la vuelta en curso
@@ -69,7 +75,7 @@ static uint8_t  ultimoTiempo;    // ultimo escalon del semaforo que ya sono
 
 // Perfil de la pista: -100 es la cuesta mas empinada hacia arriba, +100 la
 // bajada mas pronunciada, 0 es llano. Un byte por LED alcanza y sobra.
-static int8_t   pendiente[NUM_LEDS];
+static int8_t   pendiente[LEDS_MAX];
 
 // ---------- Sonido ----------
 static const Nota JINGLE_META[] = { {784, 90}, {988, 90}, {1319, 240} };
@@ -97,10 +103,62 @@ static void sonarMeta()             { tocarJingle(JINGLE_META, 3); }
 // tramo llano en la cima, el que llego sin inercia se queda ahi arriba pedaleando
 // en falso, y el que dosifico bien lo cruza lanzado. El llano es lo que le da
 // consecuencia a haber subido mal.
-static void generarPista() {
-  for (int16_t i = 0; i < NUM_LEDS; i++) pendiente[i] = 0;
+// ---------- Pista fija, cargada desde el panel web ----------
+TramoPista CAR_PISTA[CAR_MAX_TRAMOS];
 
-  uint8_t cuestas = random(1, 3);
+void iniciarPistaCarrera() {
+  memset(CAR_PISTA, 0, sizeof(CAR_PISTA));      // sin clave en NVS: pista al azar
+  leerBlob("pistaCar", CAR_PISTA, sizeof(CAR_PISTA));
+}
+
+void guardarPistaCarrera() { guardarBlob("pistaCar", CAR_PISTA, sizeof(CAR_PISTA)); }
+
+// Un tramo cuenta si tiene tipo, esta bien ordenado y ARRANCA dentro de la tira
+// que esta puesta. El que la cruza se recorta; el que empieza despues del final
+// no existe para esta tira.
+static bool tramoValido(const TramoPista& t) {
+  return t.tipo != TRAMO_NADA && t.ini <= t.fin && t.ini < LARGO_TIRA;
+}
+
+static int16_t tramoFin(const TramoPista& t) {
+  return min<int16_t>((int16_t)t.fin, (int16_t)LARGO_TIRA - 1);
+}
+
+uint8_t tramosCargados() {
+  uint8_t n = 0;
+  for (uint8_t k = 0; k < CAR_MAX_TRAMOS; k++) if (tramoValido(CAR_PISTA[k])) n++;
+  return n;
+}
+
+bool hayPistaFija() { return tramosCargados() > 0; }
+
+void dibujarPistaCargada() {
+  for (uint8_t k = 0; k < CAR_MAX_TRAMOS; k++) {
+    const TramoPista& t = CAR_PISTA[k];
+    if (!tramoValido(t)) continue;
+    CRGB c = (t.tipo == TRAMO_SUBIDA) ? COL_SUBIDA_VER : COL_BAJADA_VER;
+    for (int16_t i = (int16_t)t.ini; i <= tramoFin(t); i++) setLed(i, c);
+  }
+}
+
+static void generarPista() {
+  for (int16_t i = 0; i < LARGO_TIRA; i++) pendiente[i] = 0;
+
+  // Pista dibujada a mano: se usa tal cual y no se sortea nada. Los tramos se
+  // pisan entre si en el orden en que estan cargados, asi que el ultimo manda.
+  if (hayPistaFija()) {
+    for (uint8_t k = 0; k < CAR_MAX_TRAMOS; k++) {
+      const TramoPista& t = CAR_PISTA[k];
+      if (!tramoValido(t)) continue;
+      int8_t p = (t.tipo == TRAMO_SUBIDA) ? -100 : +100;
+      for (int16_t i = (int16_t)t.ini; i <= tramoFin(t); i++) pendiente[i] = p;
+    }
+    return;
+  }
+
+  // En la tira larga entran mas cuestas: si no, las mismas una o dos quedarian
+  // perdidas en el doble de pista y la vuelta saldria casi toda llana.
+  uint8_t cuestas = (uint8_t)random(1, 3) * (uint8_t)(LARGO_TIRA / 100);
   int16_t cursor  = CAR_MARGEN;                 // la largada siempre es llana
   for (uint8_t k = 0; k < cuestas; k++) {
     int16_t rampa  = (int16_t)random(8, 14);    // largo de CADA rampa, no del total
@@ -108,11 +166,11 @@ static void generarPista() {
 
     // Con la meseta tuneada muy larga desde el panel no entraria ninguna cuesta y
     // la pista saldria toda llana. Se recorta para que al menos la primera entre.
-    int16_t tope = (NUM_LEDS - 2 * CAR_MARGEN) - rampa * 2;
+    int16_t tope = (LARGO_TIRA - 2 * CAR_MARGEN) - rampa * 2;
     if (meseta > tope) meseta = (tope > 0) ? tope : 0;
 
     int16_t largo = rampa * 2 + meseta;
-    if (cursor + largo > NUM_LEDS - CAR_MARGEN) break;
+    if (cursor + largo > LARGO_TIRA - CAR_MARGEN) break;
 
     for (int16_t i = 0; i < rampa; i++) {
       pendiente[cursor + i]                   = -100;   // subida
@@ -158,7 +216,7 @@ static void arrancarCarrera() {
 // ---------- Dibujo ----------
 static void dibujarPista() {
   FastLED.clear();
-  for (int16_t i = 0; i < NUM_LEDS; i++) {
+  for (int16_t i = 0; i < LARGO_TIRA; i++) {
     if      (pendiente[i] < 0) leds[i] = COL_SUBIDA;
     else if (pendiente[i] > 0) leds[i] = COL_BAJADA;
   }
@@ -170,16 +228,16 @@ static void dibujarAuto(int16_t led, const CRGB& col) {
   for (uint8_t k = CAR_ESTELA; k >= 1; k--) {
     CRGB c = col;
     c.nscale8(255 / (k + 1));
-    leds[(led - k + NUM_LEDS) % NUM_LEDS] = c;
+    leds[(led - k + LARGO_TIRA) % LARGO_TIRA] = c;
   }
   leds[led] = col;
 }
 
 // Distancia total recorrida, para ordenar la carrera de atras hacia adelante.
 static inline int32_t progreso(uint8_t j) {
-  return (int32_t)vueltas[j] * NUM_LEDS + (int32_t)pos[j];
+  return (int32_t)vueltas[j] * LARGO_TIRA + (int32_t)pos[j];
 }
-static inline int16_t ledDe(uint8_t j) { return (int16_t)pos[j] % NUM_LEDS; }
+static inline int16_t ledDe(uint8_t j) { return (int16_t)pos[j] % LARGO_TIRA; }
 
 static void dibujarAutos() {
   uint8_t orden[NUM_CONTROLES];
@@ -219,15 +277,15 @@ static void avanzar(uint8_t i, float dt, uint32_t ahora) {
     sonarEmpujon(i);
   }
 
-  int16_t led = (int16_t)pos[i] % NUM_LEDS;
+  int16_t led = (int16_t)pos[i] % LARGO_TIRA;
   vel[i] += (pendiente[led] / 100.0f) * CAR_GRAVEDAD * dt;
   vel[i] -= vel[i] * (CAR_FRICCION / 100.0f) * dt;
   if (vel[i] < 0) vel[i] = 0;          // cuesta arriba se para, no retrocede
 
   pos[i] += vel[i] * dt;
 
-  if (pos[i] >= NUM_LEDS) {
-    pos[i] -= NUM_LEDS;
+  if (pos[i] >= LARGO_TIRA) {
+    pos[i] -= LARGO_TIRA;
     vueltas[i]++;
 
     uint32_t t = ahora - vueltaDesde[i];
@@ -260,7 +318,7 @@ void loopCarrera() {
     uint32_t t = ahora - faseDesde;
     CRGB c = CONTROLES[ganador].color;
     FastLED.clear();
-    for (int16_t i = 0; i < NUM_LEDS; i++) {
+    for (int16_t i = 0; i < LARGO_TIRA; i++) {
       if ((i + t / 30) % 5 == 0) leds[i] = c;
     }
     if (esRecord) dibujarChispasRecord();
@@ -282,7 +340,7 @@ void loopCarrera() {
     bool destello = (t % 800) < 260;
     if (destello) {
       CRGB luz = (paso >= 3) ? CRGB(0, 120, 0) : CRGB(120, 0, 0);
-      for (int16_t i = 0; i < NUM_LEDS; i++) leds[i] += luz;
+      for (int16_t i = 0; i < LARGO_TIRA; i++) leds[i] += luz;
     }
     dibujarAutos();
     FastLED.show();
@@ -354,5 +412,7 @@ String webCarrera() {
     s += String(CONTROLES[j].nombre) + " " + String(vueltas[j]) + "/" + String(vueltasMeta);
   }
   if (mejorVuelta) s += ", mejor vuelta " + String(mejorVuelta) + " ms";
+  s += hayPistaFija() ? (" [pista fija: " + String(tramosCargados()) + " tramos]")
+                      : " [pista al azar]";
   return s;
 }
