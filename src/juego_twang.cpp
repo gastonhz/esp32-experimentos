@@ -1,4 +1,4 @@
-// ---------- Twang: dungeon 1D de un jugador ----------
+// ---------- Twang: dungeon 1D, solo o de a dos ----------
 // El jugador es un punto verde que se mueve con el joystick: la deflexion del
 // eje Y es una VELOCIDAD (mas inclinado, mas rapido), no un paso por pulsacion,
 // que es lo que le da el tacto del TWANG original. Por eso la posicion se
@@ -11,6 +11,12 @@
 // bajaran, esperarlos abajo y matarlos de a uno seria siempre la mejor jugada.
 // La salida es el ultimo LED y solo parpadea cuando la tanda esta limpia: asi
 // se ve de un vistazo que primero hay que matar a todos y despues cruzar.
+//
+// Se juega solo o de a dos en cooperativo (verde el control 1, cian el 2), lo
+// que se elige en una pantalla previa. Mismo mapa para los dos, sin fuego
+// amigo y con tres vidas cada uno. Para pasar de nivel tienen que llegar a la
+// salida TODOS los que sigan en pie -- el que llega primero espera ahi, a salvo
+// -- y la partida recien termina cuando se quedan sin vidas los dos.
 
 #include "juego_twang.h"
 
@@ -22,7 +28,8 @@ uint16_t       TWANG_ATAQUE_ESPERA = 200;  // cooldown entre ataques: agil, pero
 const uint16_t TWANG_VEL_LENTA    = 300;  // enemigos mas lentos, pote al minimo (ms por LED)
 const uint16_t TWANG_VEL_RAPIDA   = 120;  // enemigos mas rapidos, pote al maximo (ms por LED)
 const uint16_t TWANG_VEL_MINIMA   = 55;   // piso de dificultad: por mas niveles que pasen no aceleran mas
-const uint8_t  TWANG_VIDAS        = 3;
+const uint8_t  TWANG_VIDAS        = 3;    // por jugador
+const uint8_t  TWANG_MAX_JUG      = 2;    // cooperativo de a dos
 // Twang es de los juegos ABSOLUTOS: los bichos, la lava y las cintas miden lo
 // mismo en las dos tiras, asi que la larga es el doble de mazmorra. Para que no
 // quede el doble de vacia, cada nivel pone el doble de todo (y por eso su
@@ -76,7 +83,9 @@ const uint8_t  TWANG_CINTA_VEL    = 18;   // LEDs/s que suma la cinta; bastante 
 // La lava va naranja y la cinta cyan: colores que no usa ningun otro elemento,
 // asi el terreno se lee de un vistazo sin confundirlo con un enemigo (rojo),
 // con la salida (azul) ni con un record (dorado).
-static const CRGB COL_JUGADOR = CRGB(  0, 255,   0);
+static const CRGB COL_JUGADOR = CRGB(  0, 255,   0);   // P1
+static const CRGB COL_JUG2    = CRGB(  0, 255, 255);   // P2 en cooperativo: cian puro. El azul de COL_P2
+                                                       // no se puede usar aca, es el mismo de la salida
 static const CRGB COL_ENEMIGO = CRGB(255,   0,   0);
 static const CRGB COL_SALIDA  = CRGB(  0,  60, 255);
 static const CRGB COL_AVISO   = CRGB(160,   0, 255);   // violeta: la puerta esta por escupir un enemigo
@@ -94,10 +103,23 @@ static const CRGB COL_CINTA   = CRGB(  0, 180, 160);
 // su punto y se planta, y la patrulla baja hasta su banda y ahi rebota entre
 // los dos bordes. Se pueden pisar entre ellos sin problema: no hay colision
 // enemigo-enemigo, solo enemigo-jugador.
-enum EstadoTwang { TWANG_JUGANDO, TWANG_NIVEL, TWANG_FIN };
+enum EstadoTwang { TWANG_ELIGIENDO, TWANG_JUGANDO, TWANG_NIVEL, TWANG_FIN };
 enum TipoEnemigo { ENE_CAMINANTE, ENE_CENTINELA, ENE_PATRULLA };
 static EstadoTwang estadoTwang;
-static float    jugadorPos;                        // posicion continua: el movimiento es por velocidad, no por pasos
+
+// Los jugadores tambien van en arrays paralelos. Con un solo jugador se usa
+// nada mas que el indice 0 y el codigo es exactamente el mismo: asi no hay dos
+// caminos que se desincronicen cada vez que se toca algo.
+static uint8_t  jugadoresN;                        // 1 o 2, lo elige la pantalla previa
+static float    jugPos[TWANG_MAX_JUG];             // posicion continua: el movimiento es por velocidad, no por pasos
+static int16_t  jugLed[TWANG_MAX_JUG];             // esa posicion redondeada, que es el LED que se pinta
+static uint8_t  jugVidas[TWANG_MAX_JUG];           // 0 = eliminado: no se dibuja, no choca y no juega mas
+static bool     jugLlego[TWANG_MAX_JUG];           // ya cruzo la salida y espera al companero
+static uint32_t jugAtaque[TWANG_MAX_JUG];          // millis() del ultimo ataque (ventana y cooldown)
+static bool     jugAtacando[TWANG_MAX_JUG];        // true mientras su pulso todavia mata
+static int16_t  jugRadio[TWANG_MAX_JUG];           // alcance del pulso en este frame (0 si no esta atacando)
+static uint32_t jugInvulDesde[TWANG_MAX_JUG];      // millis() del ultimo golpe recibido
+static bool     jugInvul[TWANG_MAX_JUG];           // parpadea sin poder recibir dano
 static uint8_t  enemigoTipo[TWANG_MAX_ENEMIGOS];
 static int16_t  enemigoPos[TWANG_MAX_ENEMIGOS];
 static int16_t  enemigoIni[TWANG_MAX_ENEMIGOS];    // borde bajo de su banda (o el punto donde se planta)
@@ -105,7 +127,8 @@ static int16_t  enemigoFin[TWANG_MAX_ENEMIGOS];    // borde alto de su banda: ha
 static int8_t   enemigoDir[TWANG_MAX_ENEMIGOS];    // -1 bajando, +1 subiendo, 0 plantado
 static bool     enemigoEnBanda[TWANG_MAX_ENEMIGOS];// ya llego a su zona y dejo de bajar
 static bool     enemigoCuenta[TWANG_MAX_ENEMIGOS]; // si hay que matarlo para abrir la salida
-static int8_t   enemigoLado[TWANG_MAX_ENEMIGOS];   // de que lado del jugador quedo en el frame anterior
+static int8_t   enemigoLado[TWANG_MAX_ENEMIGOS][TWANG_MAX_JUG];  // de que lado de cada jugador quedo en el
+                                                   // frame anterior: con eso se detecta el cruce
 static bool     enemigoVivo[TWANG_MAX_ENEMIGOS];
 static uint32_t enemigoPaso[TWANG_MAX_ENEMIGOS];   // millis() del ultimo paso de cada enemigo
 static uint32_t enemigoAparece[TWANG_MAX_ENEMIGOS];// millis() en que ese enemigo entra a la mazmorra
@@ -131,13 +154,8 @@ static int8_t   cintaDir[TWANG_MAX_CINTAS];        // +1 empuja hacia la salida,
 static uint8_t  cintasN;                           // cuantas cintas tiene el nivel actual
 
 static uint8_t  nivel;
-static uint8_t  vidas;
 static uint32_t ultimoFrame;                       // para el paso continuo del jugador (dt del frame)
-static uint32_t ataqueDesde;                       // millis() del ultimo ataque (sirve de ventana y de cooldown)
-static bool     atacando;                          // true mientras el pulso todavia mata
-static uint32_t invulDesde;                        // millis() del ultimo golpe recibido
-static bool     invul;                             // true mientras el jugador parpadea sin recibir dano
-static int16_t  caida;                             // LED donde cayo el jugador: centro de la animacion de derrota
+static int16_t  caida;                             // LED donde cayo el ultimo jugador: centro de la derrota
 static bool     esRecord;
 static uint32_t faseDesde;                         // millis() en que empezo TWANG_NIVEL o TWANG_FIN
 
@@ -152,10 +170,31 @@ static const Nota JINGLE_FIN[]   = { {330, 170}, {294, 170}, {247, 170}, {165, 5
 static void sonarAtaque()   { beep(1500,  30); }
 static void sonarMuerte()   { beep(2100,  45); }
 static void sonarGolpe()    { beep( 140, 220); }
+static void sonarLlegada()  { beep(1046, 70); }        // llego uno, pero todavia falta el otro
+static void sonarEliminado(){ beep(  90, 420); }       // se quedo sin vidas: mas grave y largo que un golpe
 static void sonarNivel()    { tocarJingle(JINGLE_NIVEL, 3); }
 static void sonarGameOver() { tocarJingle(JINGLE_FIN, 4); }
 
 // ---------- Helpers ----------
+// En juego = le quedan vidas. El que se queda sin ninguna desaparece de la tira
+// y el companero sigue solo; la partida termina cuando no queda ninguno.
+static bool    enJuego(uint8_t j) { return jugVidas[j] > 0; }
+static uint8_t jugadoresEnJuego() {
+  uint8_t n = 0;
+  for (uint8_t j = 0; j < jugadoresN; j++) if (enJuego(j)) n++;
+  return n;
+}
+
+// Alguien parado en los ultimos LEDs antes de la salida. Con eso el generador
+// se calla: un enemigo naciendo en la puerta justo cuando la vas a cruzar no se
+// puede esquivar. Alcanza con que este UNO de los dos, porque el que espera en
+// la salida esta tan indefenso como el que llega corriendo.
+static bool alguienEnLaPuerta() {
+  for (uint8_t j = 0; j < jugadoresN; j++)
+    if (enJuego(j) && jugLed[j] >= LARGO_TIRA - TWANG_GEN_ZONA_SEGURA) return true;
+  return false;
+}
+
 // Los que hay que limpiar para que se abra la salida. Los que suelta el
 // generador estan vivos y pegan igual, pero no cuentan: si contaran, con el
 // generador activo la salida no se abriria nunca.
@@ -286,7 +325,7 @@ static void iniciarTanda() {
     enemigoCuenta[i]  = true;                 // los de la tanda son los que abren la salida
     enemigoPos[i]     = LARGO_TIRA - 1 - (int16_t)random(0, 5);
     enemigoDir[i]     = -1;                   // todos entran bajando desde la salida
-    enemigoLado[i]    = 0;                    // sin lado todavia: se fija en su primer frame
+    for (uint8_t j = 0; j < TWANG_MAX_JUG; j++) enemigoLado[i][j] = 0;   // se fija en su primer frame
     enemigoAparece[i] = ahora + (uint32_t)i * TWANG_APARICION_MS;
     enemigoPaso[i]    = enemigoAparece[i];
 
@@ -325,51 +364,93 @@ static void iniciarTanda() {
 
   generarTerreno();             // lava y cintas nuevas en cada nivel
 
-  jugadorPos  = 0;              // cada nivel se arranca de nuevo en la base
+  for (uint8_t j = 0; j < TWANG_MAX_JUG; j++) {
+    jugPos[j]      = 0;         // cada nivel se arranca de nuevo en la base, los dos juntos
+    jugLed[j]      = 0;
+    jugLlego[j]    = false;
+    jugAtacando[j] = false;
+    jugRadio[j]    = 0;
+    jugInvul[j]    = false;
+  }
   ultimoFrame = ahora;
-  atacando    = false;
-  invul       = false;
 }
 
-void nuevoTwang() {
-  calibrarJoy(0);               // asume el stick soltado en el instante de arrancar
+static void arrancarPartida() {
+  for (uint8_t j = 0; j < jugadoresN; j++) calibrarJoy(j);   // sticks soltados al confirmar
   velInicial  = map(leerPoteCrudo(), 0, 4095, TWANG_VEL_LENTA, TWANG_VEL_RAPIDA);
   nivel       = 1;
-  vidas       = TWANG_VIDAS;
-  ataqueDesde = 0;              // 0 = ataque disponible desde el primer frame
-  invulDesde  = 0;
+  for (uint8_t j = 0; j < TWANG_MAX_JUG; j++) {
+    jugVidas[j]      = (j < jugadoresN) ? TWANG_VIDAS : 0;   // el que no juega arranca eliminado
+    jugAtaque[j]     = 0;       // 0 = ataque disponible desde el primer frame
+    jugInvulDesde[j] = 0;
+  }
   caida       = 0;
   esRecord    = false;
   estadoTwang = TWANG_JUGANDO;
   iniciarTanda();
 }
 
+void nuevoTwang() {
+  calibrarJoy(0);               // el del menu, para poder elegir
+  jugadoresN  = 1;
+  esRecord    = false;
+  estadoTwang = TWANG_ELIGIENDO;
+}
+
+// Pantalla previa: uno o dos jugadores. Tiene la misma forma que el selector
+// compartido de los juegos de dos a cuatro (loopSelectorJugadores), pero aca
+// hace falta poder elegir UNO, que ese no contempla.
+static void loopElegir() {
+  if (joystickPaso(0)) {
+    jugadoresN = (jugadoresN == 1) ? 2 : 1;
+    beep(1200, 25);
+  }
+  if (btnFlanco[0]) { arrancarPartida(); return; }
+
+  // La tira partida en tantas franjas como jugadores, cada una del color con el
+  // que va a jugar ese: se ve quien entra sin leer el LCD.
+  FastLED.clear();
+  for (uint8_t j = 0; j < jugadoresN; j++) {
+    int16_t ini = (int16_t)(((int32_t)LARGO_TIRA * j) / jugadoresN);
+    int16_t fin = (int16_t)(((int32_t)LARGO_TIRA * (j + 1)) / jugadoresN) - 1;
+    for (int16_t i = ini; i <= fin; i++) setLed(i, (j == 0) ? COL_JUGADOR : COL_JUG2);
+  }
+  nscale8(leds, LARGO_TIRA, 60);
+  FastLED.show();
+}
+
 static void perder() {
   estadoTwang = TWANG_FIN;
   faseDesde   = millis();
-  esRecord    = intentarRecord(REC_TWANG, (uint32_t)nivel);
+  // El cooperativo tiene su propio record: de a dos se limpia mucho mas rapido
+  // y meter los dos numeros en la misma lista seria comparar juegos distintos.
+  esRecord    = intentarRecord(jugadoresN > 1 ? REC_TWANG_COOP : REC_TWANG, (uint32_t)nivel);
   esRecord ? sonarRecord() : sonarGameOver();
 }
 
-// Un golpe recibido, venga de un enemigo o de la lava: en los dos casos se
-// pierde una vida, se arranca la invulnerabilidad y suena lo mismo. Devuelve
-// true si fue el ultimo: el frame tiene que cortar porque ya se entro en
-// TWANG_FIN y no hay nada mas que actualizar ni dibujar.
-static bool recibirGolpe(int16_t jugadorLed) {
-  vidas--;
-  if (vidas == 0) {
-    caida = jugadorLed;
-    perder();
-    return true;
+// Un golpe recibido por el jugador j, venga de un enemigo o de la lava: en los
+// dos casos pierde una vida, arranca su invulnerabilidad y suena. Si era la
+// ultima queda eliminado y el companero sigue solo. Devuelve true unicamente si
+// con eso se acabo la partida: ahi el frame tiene que cortar, porque ya se
+// entro en TWANG_FIN y no hay nada mas que actualizar ni dibujar.
+static bool recibirGolpe(uint8_t j) {
+  jugVidas[j]--;
+  if (jugVidas[j] == 0) {
+    caida = jugLed[j];
+    sonarEliminado();
+    if (jugadoresEnJuego() == 0) { perder(); return true; }
+    return false;
   }
-  invul      = true;
-  invulDesde = millis();
+  jugInvul[j]      = true;
+  jugInvulDesde[j] = millis();
   sonarGolpe();
   return false;
 }
 
 void loopTwang() {
   uint32_t ahora = millis();
+
+  if (estadoTwang == TWANG_ELIGIENDO) { loopElegir(); return; }
 
   if (estadoTwang == TWANG_FIN) {
     // Derrota: onda roja que se expande desde donde cayo el jugador, y al menu.
@@ -399,27 +480,31 @@ void loopTwang() {
     return;
   }
 
-  // --- Movimiento del jugador: velocidad * tiempo del frame ---
+  // --- Movimiento: velocidad * tiempo del frame, cada jugador con su stick ---
   // El dt se mide contra el frame anterior porque el loop no tiene periodo fijo.
   float dt = (ahora - ultimoFrame) / 1000.0f;
   ultimoFrame = ahora;
-  jugadorPos += leerJoyNorm(0) * TWANG_VEL_JUGADOR * dt;
+  for (uint8_t j = 0; j < jugadoresN; j++) {
+    if (!enJuego(j)) continue;
+    if (jugLlego[j]) { jugLed[j] = LARGO_TIRA - 1; continue; }   // esperando en la salida: ya no se mueve
+    jugPos[j] += leerJoyNorm(j) * TWANG_VEL_JUGADOR * dt;
 
-  // Cintas: arrastran al que este parado encima, ademas de lo que haga el
-  // joystick. Como TWANG_CINTA_VEL es bastante menor que TWANG_VEL_JUGADOR se
-  // puede caminar en contra (mas lento), no es una trampa sin salida.
-  int16_t pisando = (int16_t)(jugadorPos + 0.5f);
-  for (uint8_t i = 0; i < cintasN; i++) {
-    if (pisando >= cintaIni[i] && pisando <= cintaFin[i]) {
-      jugadorPos += cintaDir[i] * (float)TWANG_CINTA_VEL * dt;
+    // Cintas: arrastran al que este parado encima, ademas de lo que haga el
+    // joystick. Como TWANG_CINTA_VEL es bastante menor que TWANG_VEL_JUGADOR se
+    // puede caminar en contra (mas lento), no es una trampa sin salida.
+    int16_t pisando = (int16_t)(jugPos[j] + 0.5f);
+    for (uint8_t i = 0; i < cintasN; i++) {
+      if (pisando >= cintaIni[i] && pisando <= cintaFin[i]) {
+        jugPos[j] += cintaDir[i] * (float)TWANG_CINTA_VEL * dt;
+      }
     }
+
+    if (jugPos[j] < 0)               jugPos[j] = 0;
+    if (jugPos[j] > LARGO_TIRA - 1)  jugPos[j] = LARGO_TIRA - 1;
+    jugLed[j] = (int16_t)(jugPos[j] + 0.5f);
+
+    if (jugInvul[j] && ahora - jugInvulDesde[j] > TWANG_INVUL_MS) jugInvul[j] = false;
   }
-
-  if (jugadorPos < 0)            jugadorPos = 0;
-  if (jugadorPos > LARGO_TIRA - 1) jugadorPos = LARGO_TIRA - 1;
-  int16_t jugadorLed = (int16_t)(jugadorPos + 0.5f);
-
-  if (invul && ahora - invulDesde > TWANG_INVUL_MS) invul = false;
 
   // --- Lava: cada tramo alterna encendida/apagada con su propio reloj ---
   // Estar parado en una encendida cuesta una vida, igual que un enemigo.
@@ -445,20 +530,30 @@ void loopTwang() {
         }
       }
     }
-    if (lavaOn[i] && !invul && jugadorLed >= lavaIni[i] && jugadorLed <= lavaFin[i]) {
-      if (recibirGolpe(jugadorLed)) return;
+    if (!lavaOn[i]) continue;
+    for (uint8_t j = 0; j < jugadoresN; j++) {
+      if (!enJuego(j) || jugInvul[j] || jugLlego[j]) continue;
+      if (jugLed[j] >= lavaIni[i] && jugLed[j] <= lavaFin[i]) {
+        if (recibirGolpe(j)) return;
+      }
     }
   }
 
   // --- Ataque: pulso que se expande durante una ventana corta, con cooldown ---
-  if (btnFlanco[0] && ahora - ataqueDesde >= TWANG_ATAQUE_ESPERA) {
-    ataqueDesde = ahora;
-    atacando    = true;
-    sonarAtaque();
+  // Uno por jugador, cada uno con su boton y su cooldown. No hay fuego amigo:
+  // el pulso solo mira enemigos, los jugadores se atraviesan entre ellos.
+  for (uint8_t j = 0; j < jugadoresN; j++) {
+    jugRadio[j] = 0;
+    if (!enJuego(j) || jugLlego[j]) { jugAtacando[j] = false; continue; }
+    if (btnFlanco[j] && ahora - jugAtaque[j] >= TWANG_ATAQUE_ESPERA) {
+      jugAtaque[j]   = ahora;
+      jugAtacando[j] = true;
+      sonarAtaque();
+    }
+    uint32_t t = ahora - jugAtaque[j];
+    if (jugAtacando[j] && t > TWANG_ATAQUE_MS) jugAtacando[j] = false;
+    if (jugAtacando[j]) jugRadio[j] = 1 + ((int16_t)TWANG_ATAQUE_RADIO * (int16_t)t) / TWANG_ATAQUE_MS;
   }
-  uint32_t tAtaque = ahora - ataqueDesde;
-  if (atacando && tAtaque > TWANG_ATAQUE_MS) atacando = false;
-  int16_t radio = atacando ? (1 + ((int16_t)TWANG_ATAQUE_RADIO * (int16_t)tAtaque) / TWANG_ATAQUE_MS) : 0;
 
   // --- Generador: la salida va soltando caminantes hasta que llegues ---
   // No cuentan para abrir la salida y no paran cuando la tanda queda limpia:
@@ -470,7 +565,7 @@ void loopTwang() {
     // cruzarla te mata sin margen de reaccion, y eso no es jugable. Se
     // reprograma igual, asi al bajar de la zona tenes el intervalo entero por
     // delante en vez de un enemigo encima al primer paso.
-    if (jugadorLed < LARGO_TIRA - TWANG_GEN_ZONA_SEGURA) {
+    if (!alguienEnLaPuerta()) {
       int8_t libre = -1;
       for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS && libre < 0; i++) if (!enemigoVivo[i]) libre = (int8_t)i;
       if (libre >= 0) {
@@ -480,7 +575,7 @@ void loopTwang() {
         enemigoEnBanda[libre] = true;
         enemigoPos[libre]     = LARGO_TIRA - 1;
         enemigoDir[libre]     = -1;
-        enemigoLado[libre]    = 0;
+        for (uint8_t j = 0; j < TWANG_MAX_JUG; j++) enemigoLado[libre][j] = 0;
         enemigoAparece[libre] = ahora;
         enemigoPaso[libre]    = ahora;
       }
@@ -513,40 +608,69 @@ void loopTwang() {
       }
     }
 
-    int16_t d = enemigoPos[i] - jugadorLed;
-
-    if (atacando && (d < 0 ? -d : d) <= radio) {  // el pulso lo alcanzo
+    // Lo mata el pulso de cualquiera de los dos.
+    bool muerto = false;
+    for (uint8_t j = 0; j < jugadoresN && !muerto; j++) {
+      if (!jugAtacando[j]) continue;
+      int16_t d = enemigoPos[i] - jugLed[j];
+      if ((d < 0 ? -d : d) <= jugRadio[j]) muerto = true;
+    }
+    if (muerto) {
       enemigoVivo[i] = false;
       sonarMuerte();
       continue;
     }
 
-    // Contacto: ahora que hay enemigos que se quedan arriba se puede chocar de
-    // los dos lados (subiendo contra uno, o dejando que uno te alcance por la
+    // Contacto: como hay enemigos que se quedan arriba se puede chocar de los
+    // dos lados (subiendo contra uno, o dejando que uno te alcance por la
     // espalda), asi que no se mira "esta debajo mio" sino el CRUCE: que haya
     // cambiado de lado desde el frame anterior, o que caiga en el mismo LED.
-    // Durante la invulnerabilidad se atraviesan sin hacer dano, para no comerse
-    // varias vidas del mismo choque.
-    int8_t lado   = (d > 0) ? +1 : (d < 0 ? -1 : 0);
-    bool   choque = (lado == 0) || (enemigoLado[i] != 0 && lado != enemigoLado[i]);
-    enemigoLado[i] = lado;
-    if (choque && !invul) {
-      enemigoVivo[i] = false;
-      if (recibirGolpe(jugadorLed)) return;
+    // Se lleva un lado por jugador, porque el mismo bicho puede estar arriba de
+    // uno y abajo del otro. Durante la invulnerabilidad lo atraviesan sin hacer
+    // dano, para no comerse varias vidas del mismo choque.
+    for (uint8_t j = 0; j < jugadoresN; j++) {
+      if (!enJuego(j)) continue;
+      int16_t d      = enemigoPos[i] - jugLed[j];
+      int8_t  lado   = (d > 0) ? +1 : (d < 0 ? -1 : 0);
+      bool    choque = (lado == 0) || (enemigoLado[i][j] != 0 && lado != enemigoLado[i][j]);
+      enemigoLado[i][j] = lado;
+      if (choque && !jugInvul[j] && !jugLlego[j]) {
+        enemigoVivo[i] = false;
+        if (recibirGolpe(j)) return;
+        break;                       // ya se lo llevo puesto uno: no puede chocar tambien al otro
+      }
     }
   }
 
-  // --- Salida: cruzarla con la tanda limpia sube de nivel ---
+  // --- Salida: con la tanda limpia, el que llega se queda esperando ahi ---
+  // Para pasar de nivel tienen que haber llegado TODOS los que sigan en pie. El
+  // que espera queda a salvo (no lo tocan ni los enemigos ni la lava): si no,
+  // ayudar al companero seria peor que dejarlo morir.
   bool limpio = (enemigosDeTanda() == 0);
-  if (limpio && jugadorLed >= LARGO_TIRA - 1) {
-    estadoTwang = TWANG_NIVEL;
-    faseDesde   = ahora;
-    sonarNivel();
-    return;
+  if (limpio) {
+    bool llegoAlguno = false;
+    for (uint8_t j = 0; j < jugadoresN; j++) {
+      if (enJuego(j) && !jugLlego[j] && jugLed[j] >= LARGO_TIRA - 1) {
+        jugLlego[j] = true;
+        llegoAlguno = true;
+      }
+    }
+    uint8_t enPie = 0, llegaron = 0;
+    for (uint8_t j = 0; j < jugadoresN; j++) {
+      if (!enJuego(j)) continue;
+      enPie++;
+      if (jugLlego[j]) llegaron++;
+    }
+    if (enPie && llegaron == enPie) {
+      estadoTwang = TWANG_NIVEL;
+      faseDesde   = ahora;
+      sonarNivel();
+      return;
+    }
+    if (llegoAlguno) sonarLlegada();     // falta el otro: solo se avisa que este ya esta
   }
 
-  // --- Dibujo: salida y terreno abajo, despues enemigos, pulso y jugador ---
-  // (el jugador va ultimo para que se vea siempre, aunque este sobre la lava).
+  // --- Dibujo: salida y terreno abajo, despues enemigos, pulsos y jugadores ---
   FastLED.clear();
   // La salida parpadea SOLO con la tanda limpia; con enemigos vivos queda fija.
   // Y antes de cada enemigo del generador da dos destellos violetas: la puerta
@@ -554,7 +678,7 @@ void loopTwang() {
   // que salen de a uno y con tiempo de sobra; los de la tanda nacen todos
   // juntos al arrancar el nivel y esto seria un parpadeo ilegible.
   uint32_t falta  = (genProximo > ahora) ? genProximo - ahora : 0;
-  bool     avisar = falta && jugadorLed < LARGO_TIRA - TWANG_GEN_ZONA_SEGURA &&
+  bool     avisar = falta && !alguienEnLaPuerta() &&
                     ((falta <= TWANG_GEN_AVISO_1 && falta > TWANG_GEN_AVISO_1 - TWANG_GEN_AVISO_MS) ||
                      (falta <= TWANG_GEN_AVISO_2 && falta > TWANG_GEN_AVISO_2 - TWANG_GEN_AVISO_MS));
   bool salidaOn = limpio ? ((ahora / 200) % 2 == 0) : true;
@@ -591,30 +715,49 @@ void loopTwang() {
     if (enemigoVivo[i] && ahora >= enemigoAparece[i]) setLed(enemigoPos[i], COL_ENEMIGO);
   }
 
-  if (atacando) {                            // flash blanco que crece y se apaga
+  for (uint8_t j = 0; j < jugadoresN; j++) {   // flash blanco que crece y se apaga
+    if (!enJuego(j) || !jugAtacando[j]) continue;
+    uint32_t t = ahora - jugAtaque[j];
     CRGB c = CRGB::White;
-    c.nscale8(255 - (uint8_t)((255UL * tAtaque) / TWANG_ATAQUE_MS));
-    for (int16_t k = -radio; k <= radio; k++) setLed(jugadorLed + k, c);
+    c.nscale8(255 - (uint8_t)((255UL * t) / TWANG_ATAQUE_MS));
+    for (int16_t k = -jugRadio[j]; k <= jugRadio[j]; k++) setLed(jugLed[j] + k, c);
   }
 
-  // Al recibir un golpe el jugador parpadea mientras dura la invulnerabilidad.
-  if (!invul || (ahora / 100) % 2 == 0) setLed(jugadorLed, COL_JUGADOR);
+  // Los jugadores van ultimos para que se vean siempre, aunque esten sobre la
+  // lava o dentro del pulso del otro. Al recibir un golpe parpadea el que fue,
+  // mientras le dure la invulnerabilidad.
+  for (uint8_t j = 0; j < jugadoresN; j++) {
+    if (!enJuego(j)) continue;
+    if (jugInvul[j] && (ahora / 100) % 2 != 0) continue;
+    setLed(jugLed[j], (j == 0) ? COL_JUGADOR : COL_JUG2);
+  }
   FastLED.show();
 }
 
 // ---------- LCD: nivel y vidas arriba, estado de la tanda abajo ----------
+static String vidasDe(uint8_t j) { return enJuego(j) ? String(jugVidas[j]) : String("-"); }
+
 void lcdTwang() {
+  if (estadoTwang == TWANG_ELIGIENDO) {
+    lcdLinea(0, "Twang");
+    lcdLinea(1, jugadoresN == 1 ? "< 1 jugador  >" : "< 2 jugadores >");
+    return;
+  }
   if (estadoTwang == TWANG_FIN) {
     lcdLinea(0, "** GAME OVER **");
     if (esRecord) lcdLinea(1, "*NUEVO RECORD!*");
     else          lcdLinea(1, "Llegaste al Nv" + String(nivel));
     return;
   }
-  lcdLinea(0, "Nivel " + String(nivel) + "  Vidas " + String(vidas));
+  if (jugadoresN == 1) lcdLinea(0, "Nivel " + String(nivel) + "  Vidas " + vidasDe(0));
+  else                 lcdLinea(0, "Nv " + String(nivel) + " P1:" + vidasDe(0) + " P2:" + vidasDe(1));
   uint8_t vivos = enemigosDeTanda();
   lcdLinea(1, vivos ? ("Enemigos: " + String(vivos)) : "Salida abierta!");
 }
 
 String webTwang() {
-  return "Nivel " + String(nivel) + ", vidas " + String(vidas);
+  if (estadoTwang == TWANG_ELIGIENDO) return "Eligiendo jugadores";
+  String s = "Nivel " + String(nivel);
+  if (jugadoresN == 1) return s + ", vidas " + vidasDe(0);
+  return s + ", P1 " + vidasDe(0) + " vidas, P2 " + vidasDe(1) + " vidas";
 }

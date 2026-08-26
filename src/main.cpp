@@ -20,7 +20,7 @@
     juego_pong.*      Pong 1D con paletas moviles, media tira para cada uno
     juego_tug.*       Tira y Afloja, cinchada de botones
     juego_rompecolores.*  contra un muro de colores, a uno o a cuatro controles
-    juego_twang.*     dungeon 1D con joystick, lava y cintas
+    juego_twang.*     dungeon 1D con joystick, lava y cintas, solo o de a dos
     juego_paddle.*    Pong de un jugador con la paleta movil
     juego_stacker.*   apilar bloques sin perder ancho
     juego_esquiva.*   muros que bajan y hay que meterse en los huecos

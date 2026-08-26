@@ -270,7 +270,7 @@ String barraLCD(uint16_t valor, uint16_t maximo, uint8_t ancho);
 // ---------- Records persistentes (NVS) ----------
 // Un record por juego puntuable. Se escribe solo cuando se supera el valor
 // viejo: la NVS tiene ciclos de escritura contados.
-enum Record { REC_PONG, REC_TUG, REC_RC, REC_TWANG,
+enum Record { REC_PONG, REC_TUG, REC_RC, REC_TWANG, REC_TWANG_COOP,
               REC_PADDLE, REC_STACKER, REC_ESQUIVA, REC_LANDER, REC_DUELO,
               REC_CARRERA, REC_PELEA, REC_WESTERN, NUM_RECORDS };
 

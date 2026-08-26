@@ -623,6 +623,7 @@ const RecordDef RECORDS[] = {
   { "hsTug",    "Tira y Afloja", "",       " empujes",  false,  true  },   // mas tira que empujar
   { "hsRc",     "Rompecolores",  "",       " pts",      false,  true  },   // el muro tarda el doble
   { "hsTwang",  "Twang",         "Nivel ", "",          false,  true  },   // mazmorra del doble
+  { "hsTwCoop", "Twang coop",    "Nivel ", "",          false,  true  },   // de a dos se llega mas lejos
   { "hsPaddle", "Paddle",        "",       " pts",      false,  false },
   { "hsStack",  "Stacker",       "Piso ",  "",          false,  false },
   { "hsEsq",    "Salta Muros",   "",       " muros",    false,  true  },   // el doble de muros
