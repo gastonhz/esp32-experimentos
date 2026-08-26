@@ -281,6 +281,7 @@ void setup() {
 }
 
 void loop() {
+
   // Mientras se sube un firmware la consola no juega ni lee controles: escribir
   // flash bloquea de a ratos, y ademas conviene que la tira y el LCD esten
   // contando el progreso y no dibujando una partida que nadie esta mirando.
@@ -298,11 +299,14 @@ void loop() {
   actualizarBuzzer();
 
   // El LCD se repinta ultimo y solo escribe las filas que cambiaron.
+  //
+  // Mientras se ve el cartel de salida el juego NO toca el LCD. La cache de
+  // lcdLinea evita reescribir una fila que no cambio, pero no sirve de nada si
+  // dos textos distintos se pelean por la misma fila: el juego escribia la de
+  // abajo, el cartel se la pisaba, y en el frame siguiente pasaba de nuevo. El
+  // display quedaba parpadeando entre las dos cosas todo el mantenido.
   if      (pantalla == MENU)   lcdMenu();
   else if (pantalla == NOMBRE) lcdNombre();
-  else                         JUEGOS[juegoActivo].lcd();
-
-  // Va DESPUES de que el juego dibuje lo suyo, porque le pisa la fila de abajo.
-  // No cuesta nada: lcdLinea solo escribe al display cuando el texto cambio.
-  if (atrasProgreso) lcdLinea(1, "Saliendo " + barraLCD(atrasProgreso, 100, 7));
+  else if (!atrasProgreso)     JUEGOS[juegoActivo].lcd();
+  else                         lcdLinea(1, "Saliendo " + barraLCD(atrasProgreso, 100, 7));
 }
