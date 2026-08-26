@@ -361,6 +361,12 @@ enum Juego { JUEGO_PONG, JUEGO_TUG, JUEGO_ROMPECOLORES, JUEGO_TWANG,
 // menos aca serian punteros a funcion nulos y la consola se reiniciaria al
 // entrar al ultimo juego de la lista.
 extern const JuegoDef JUEGOS[];
+// Cuantas vueltas por segundo esta dando el loop de la consola. Lo mide y lo
+// publica main.cpp (como JUEGOS[]), y lo mira el panel web: es el numero que
+// dice si un juego se puso pesado, porque varios calculan el movimiento con el
+// dt del frame y la tira larga tarda el doble en dibujarse.
+extern uint16_t fpsConsola;
+
 extern uint8_t juegoSel;      // indice resaltado en el menu
 extern uint8_t juegoActivo;   // juego que se esta jugando
 

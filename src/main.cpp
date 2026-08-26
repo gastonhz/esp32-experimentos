@@ -280,7 +280,24 @@ void setup() {
   pantalla = MENU;   // arranca en el selector de juegos
 }
 
+// Ritmo del loop, en vueltas por segundo. Se cuenta y se promedia una vez por
+// segundo: es una division por segundo, no cuesta nada, y sirve para ver desde
+// el panel si un juego o la tira larga estan comiendo el frame.
+uint16_t fpsConsola = 0;
+static void medirFps() {
+  static uint16_t vueltas  = 0;
+  static uint32_t desde    = 0;
+  uint32_t ahora = millis();
+  vueltas++;
+  if (ahora - desde >= 1000) {
+    fpsConsola = (uint16_t)(((uint32_t)vueltas * 1000) / (ahora - desde));
+    vueltas    = 0;
+    desde      = ahora;
+  }
+}
+
 void loop() {
+  medirFps();
 
   // Mientras se sube un firmware la consola no juega ni lee controles: escribir
   // flash bloquea de a ratos, y ademas conviene que la tira y el LCD esten

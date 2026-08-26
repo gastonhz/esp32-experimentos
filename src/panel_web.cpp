@@ -10,6 +10,7 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <esp_ota_ops.h>
+#include <nvs.h>
 
 #include "juego_pong.h"
 #include "juego_tug.h"
@@ -119,6 +120,99 @@ static const Param PARAMS[] = {
 };
 static const uint8_t NUM_PARAMS = sizeof(PARAMS) / sizeof(PARAMS[0]);
 
+// ---------- Estado y diagnostico ----------
+// Todo esto se lee EN VIVO de la placa: no hay nada anotado al flashear. El
+// tamano del firmware sale de la particion que se esta ejecutando, y la memoria
+// del propio asignador, asi que los numeros son los de esta corrida y no los de
+// la compilacion.
+static String kB(uint32_t bytes) { return String(bytes / 1024.0f, 1) + " kB"; }
+
+static String porcentaje(uint32_t parte, uint32_t total) {
+  if (!total) return "?";
+  return String((uint32_t)((parte * 100ULL) / total)) + "%";
+}
+
+static String tiempoEncendida() {
+  uint32_t s = millis() / 1000;
+  uint32_t d = s / 86400;  s %= 86400;
+  uint32_t h = s / 3600;   s %= 3600;
+  uint32_t m = s / 60;     s %= 60;
+  String t;
+  if (d)           t += String(d) + " d ";
+  if (d || h)      t += String(h) + " h ";
+  if (d || h || m) t += String(m) + " min ";
+  return t + String(s) + " s";
+}
+
+// Barra de proporcion en HTML puro, sin imagenes ni CSS externo, que la red del
+// ESP32 no tiene salida a internet. Son SPAN y no DIV porque van dentro de un
+// <p>: un div ahi adentro le cierra el parrafo al navegador y descoloca todo lo
+// que viene despues.
+static String barraHtml(uint32_t parte, uint32_t total, const char* color) {
+  uint32_t p = total ? (uint32_t)((parte * 100ULL) / total) : 0;
+  if (p > 100) p = 100;
+  return "<span style=\"display:block;background:#eee;border-radius:3px;height:8px;margin:2px 0 6px\">"
+         "<span style=\"display:block;background:" + String(color) + ";width:" + String(p) +
+         "%;height:8px;border-radius:3px\"></span></span>";
+}
+
+static String bloqueDiagnostico() {
+  String h;
+  h.reserve(1600);
+  h += "<h2>Estado y diagnostico</h2>";
+
+  // --- RAM ---
+  // El numero que da PlatformIO al compilar es lo que se reserva ESTATICO; el
+  // que importa mientras corre es este, y sobre todo el minimo historico: si
+  // ese se acerca a cero, en algun pico la consola se queda sin memoria y se
+  // reinicia sola (y ahi el motivo del reinicio de mas abajo dice "Crash").
+  uint32_t heapTotal = ESP.getHeapSize();
+  uint32_t heapLibre = ESP.getFreeHeap();
+  h += "<h3>Memoria RAM</h3>";
+  h += "<p>Usada: <b>" + kB(heapTotal - heapLibre) + "</b> de " + kB(heapTotal) +
+       " (" + porcentaje(heapTotal - heapLibre, heapTotal) + ")";
+  h += barraHtml(heapTotal - heapLibre, heapTotal, "#3a7");
+  h += "<small>Minimo libre desde que arranco: <b>" + kB(ESP.getMinFreeHeap()) + "</b>"
+       " &middot; bloque contiguo mas grande: " + kB(ESP.getMaxAllocHeap()) + "</small></p>";
+
+  // --- Flash ---
+  // El firmware se mide contra la particion en la que esta, no contra el chip:
+  // hay dos particiones de app (para que el OTA escriba en la que no corre) y
+  // lo que puede crecer el binario es el tamano de UNA.
+  const esp_partition_t* corriendo = esp_ota_get_running_partition();
+  uint32_t appTotal = corriendo ? corriendo->size : 0;
+  uint32_t appUsada = ESP.getSketchSize();
+  h += "<h3>Flash</h3>";
+  h += "<p>Firmware: <b>" + kB(appUsada) + "</b> de " + kB(appTotal) +
+       " de la particion (" + porcentaje(appUsada, appTotal) + ")";
+  h += barraHtml(appUsada, appTotal, "#37a");
+  h += "<small>Chip de " + kB(ESP.getFlashChipSize()) + " &middot; corriendo en <b>" +
+       String(corriendo ? corriendo->label : "?") + "</b></small></p>";
+
+  // --- NVS: donde viven los records y los ajustes ---
+  // Si se llenara, los records dejarian de guardarse sin avisar.
+  nvs_stats_t nvs;
+  if (nvs_get_stats(NULL, &nvs) == ESP_OK) {
+    h += "<h3>Memoria guardada (NVS)</h3><p>";
+    h += "Entradas usadas: <b>" + String(nvs.used_entries) + "</b> de " +
+         String(nvs.total_entries) + " (" +
+         porcentaje(nvs.used_entries, nvs.total_entries) + ")";
+    h += barraHtml(nvs.used_entries, nvs.total_entries, "#a73");
+    h += "<small>Aca viven los records firmados y los ajustes.</small></p>";
+  }
+
+  // --- Marcha de la consola ---
+  h += "<h3>Marcha</h3><p>";
+  h += "Loop: <b>" + String(fpsConsola) + " vueltas/s</b> &middot; tira de " +
+       String(LARGO_TIRA) + " LEDs<br>";
+  h += "Encendida hace: <b>" + tiempoEncendida() + "</b><br>";
+  h += "Ultimo reinicio: <b>" + textoCausaReset() + "</b><br>";
+  h += "<small>" + String(ESP.getChipModel()) + " rev " + String(ESP.getChipRevision()) +
+       ", " + String(ESP.getChipCores()) + " nucleos a " + String(ESP.getCpuFreqMHz()) + " MHz"
+       " &middot; " + String(WiFi.softAPgetStationNum()) + " conectado(s) al AP</small></p>";
+  return h;
+}
+
 // Lo unico de la pagina que cambia solo: estado del juego y records. Va aparte
 // porque se sirve por dos vias -- dentro de la pagina completa la primera vez, y
 // por /estado en cada refresco.
@@ -135,7 +229,6 @@ static String bloqueVivo() {
     h += "Jugando: <b>" + String(JUEGOS[juegoActivo].nombre) + "</b><br>";
     h += JUEGOS[juegoActivo].web();
   }
-  h += "<br><small>Ultimo reinicio: " + textoCausaReset() + "</small>";
   h += "</p>";
 
   h += "<h2>Records</h2><ul>";
@@ -153,7 +246,7 @@ static String bloqueVivo() {
 
 static String paginaHtml() {
   String h;
-  h.reserve(13000);
+  h.reserve(15000);
   h += "<!DOCTYPE html><html><head><meta charset=\"utf-8\">";
   h += "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
   h += "<title>PixeLED</title></head>";
@@ -225,16 +318,16 @@ static String paginaHtml() {
   }
   h += "<p><input type=\"submit\" value=\"Aplicar\"></p></form>";
 
-  // --- Actualizacion de firmware ---
-  // La fecha de compilacion es la unica forma de confirmar de un vistazo que la
+  // --- Estado y diagnostico, y abajo la actualizacion ---
+  // Van pegados a proposito: los dos numeros que hay que mirar antes y despues
+  // de flashear estan ahi arriba. La particion (app0/app1) dice si el OTA
+  // realmente cambio de ranura, y la fecha de compilacion dice que version
+  // corre, que es la unica forma de confirmar de un vistazo que la
   // actualizacion entro: el numero de version se olvida de subir, la fecha no.
-  // La fecha dice QUE version corre; la particion dice si el OTA realmente
-  // cambio de ranura. Despues de una actualizacion exitosa esto pasa de app0 a
-  // app1 (o al reves): es la prueba de que no se reinicio y siguio con la vieja.
-  const esp_partition_t* corriendo = esp_ota_get_running_partition();
+  h += "<div id=\"diag\">" + bloqueDiagnostico() + "</div>";
+
   h += "<h2>Firmware</h2>";
-  h += "<p><small>Compilado el " __DATE__ " a las " __TIME__ " &middot; corriendo en <b>";
-  h += String(corriendo ? corriendo->label : "?") + "</b></small></p>";
+  h += "<p><small>Compilado el " __DATE__ " a las " __TIME__ "</small></p>";
   h += "<form method=\"POST\" action=\"/actualizar\" enctype=\"multipart/form-data\">";
   h += "<input type=\"file\" name=\"firmware\" accept=\".bin\"> ";
   h += "<input type=\"submit\" value=\"Actualizar\">";
@@ -251,11 +344,11 @@ static String paginaHtml() {
   // ejecuta el script no se rompe nada: la pagina se ve igual, solo deja de
   // actualizarse sola. Sin librerias ni CDN a proposito -- la red la sirve el
   // propio ESP32 y no tiene salida a internet.
-  h += "<script>setInterval(function(){"
-       "fetch('/estado').then(function(r){return r.text();})"
-       ".then(function(t){document.getElementById('vivo').innerHTML=t;})"
-       ".catch(function(){});"
-       "},3000);</script>";
+  h += "<script>function pinta(url,id){"
+       "fetch(url).then(function(r){return r.text();})"
+       ".then(function(t){document.getElementById(id).innerHTML=t;})"
+       ".catch(function(){});}"
+       "setInterval(function(){pinta('/estado','vivo');pinta('/diag','diag');},3000);</script>";
 
   h += "</body></html>";
   return h;
@@ -288,6 +381,16 @@ void iniciarPanelWeb() {
       return;
     }
     request->send(200, "text/html", bloqueVivo());
+  });
+
+  // Igual que /estado: durante una actualizacion no se arma HTML, que se
+  // estaria construyendo en la misma tarea que escribe la flash.
+  server.on("/diag", HTTP_GET, [](AsyncWebServerRequest* request) {
+    if (otaActiva()) {
+      request->send(200, "text/html", "");
+      return;
+    }
+    request->send(200, "text/html", bloqueDiagnostico());
   });
 
   server.on("/set", HTTP_GET, [](AsyncWebServerRequest* request) {
