@@ -39,17 +39,17 @@
 #include "juego_esquiva.h"
 
 // ---------- Parametros ----------
-uint16_t ESQ_VEL_JUGADOR   = 60;  // LEDs por segundo caminando
+uint16_t ESQ_VEL_JUGADOR   = 50;  // LEDs por segundo caminando
 uint16_t ESQ_SALTO_MIN     = 10;  // distancia del salto soltando enseguida (LEDs)
 uint16_t ESQ_SALTO_MAX     = 15;  // distancia con la carga completa (LEDs)
 uint16_t ESQ_SALTO_CARGA_MS = 550;// cuanto tarda la mira en ir de MIN a MAX. Se
                                   // estiro junto con el rango para que cada LED
                                   // de la carga siga durando mas o menos lo mismo
                                   // y se pueda soltar en el que uno quiere.
-uint16_t ESQ_HUECO_MIN     = 7;   // hueco mas chico que puede generarse (LEDs)
-uint16_t ESQ_HUECO_MAX     = 16;  // hueco mas grande
+uint16_t ESQ_HUECO_MIN     = 12;   // hueco mas chico que puede generarse (LEDs)
+uint16_t ESQ_HUECO_MAX     = 20;  // hueco mas grande
 uint16_t ESQ_MURO_MIN      = 4;   // muro mas fino
-uint16_t ESQ_MURO_MAX      = 10;  // muro mas grueso (grosorMaximo() lo recorta
+uint16_t ESQ_MURO_MAX      = 9;  // muro mas grueso (grosorMaximo() lo recorta
                                   // si no entrara dentro del salto largo)
 uint16_t ESQ_SALTO_ESPERA  = 350; // descanso despues de caer, antes de apuntar de nuevo
 
