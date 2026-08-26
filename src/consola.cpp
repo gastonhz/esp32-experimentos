@@ -624,6 +624,7 @@ const RecordDef RECORDS[] = {
   { "hsRc",     "Rompecolores",  "",       " pts",      false,  true  },   // el muro tarda el doble
   { "hsTwang",  "Twang",         "Nivel ", "",          false,  true  },   // mazmorra del doble
   { "hsTwCoop", "Twang coop",    "Nivel ", "",          false,  true  },   // de a dos se llega mas lejos
+  { "hsTw32",   "Twang32",       "",       " pts",      false,  true  },   // el puntaje canonico: vidas que sobran
   { "hsPaddle", "Paddle",        "",       " pts",      false,  false },
   { "hsStack",  "Stacker",       "Piso ",  "",          false,  false },
   { "hsEsq",    "Salta Muros",   "",       " muros",    false,  true  },   // el doble de muros

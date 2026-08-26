@@ -19,6 +19,7 @@
 // -- y la partida recien termina cuando se quedan sin vidas los dos.
 
 #include "juego_twang.h"
+#include "juego_twang32.h"   // la variante canonica, que es otro juego entero
 
 // ---------- Parametros ----------
 uint16_t       TWANG_VEL_JUGADOR   = 45;   // LEDs por segundo con el joystick a fondo
@@ -103,13 +104,19 @@ static const CRGB COL_CINTA   = CRGB(  0, 180, 160);
 // su punto y se planta, y la patrulla baja hasta su banda y ahi rebota entre
 // los dos bordes. Se pueden pisar entre ellos sin problema: no hay colision
 // enemigo-enemigo, solo enemigo-jugador.
-enum EstadoTwang { TWANG_ELIGIENDO, TWANG_JUGANDO, TWANG_NIVEL, TWANG_FIN };
+enum EstadoTwang { TWANG_ELIGIENDO, TWANG_CANONICO, TWANG_JUGANDO, TWANG_NIVEL, TWANG_FIN };
+
+// Las tres variantes de la pantalla previa. Las dos primeras son esta version
+// (uno o dos jugadores); la tercera es el TWANG32 canonico de bdring, que no
+// comparte nada con esta salvo la consola y vive en juego_twang32.cpp.
+enum VarTwang { VAR_1JUG, VAR_2JUG, VAR_CANONICO, VAR_N };
 enum TipoEnemigo { ENE_CAMINANTE, ENE_CENTINELA, ENE_PATRULLA };
 static EstadoTwang estadoTwang;
 
 // Los jugadores tambien van en arrays paralelos. Con un solo jugador se usa
 // nada mas que el indice 0 y el codigo es exactamente el mismo: asi no hay dos
 // caminos que se desincronicen cada vez que se toca algo.
+static uint8_t  variante;                          // que se eligio en la pantalla previa
 static uint8_t  jugadoresN;                        // 1 o 2, lo elige la pantalla previa
 static float    jugPos[TWANG_MAX_JUG];             // posicion continua: el movimiento es por velocidad, no por pasos
 static int16_t  jugLed[TWANG_MAX_JUG];             // esa posicion redondeada, que es el LED que se pinta
@@ -392,30 +399,53 @@ static void arrancarPartida() {
 
 void nuevoTwang() {
   calibrarJoy(0);               // el del menu, para poder elegir
+  variante    = VAR_1JUG;
   jugadoresN  = 1;
   esRecord    = false;
   estadoTwang = TWANG_ELIGIENDO;
 }
 
-// Pantalla previa: uno o dos jugadores. Tiene la misma forma que el selector
-// compartido de los juegos de dos a cuatro (loopSelectorJugadores), pero aca
-// hace falta poder elegir UNO, que ese no contempla.
+// Pantalla previa: las tres variantes. Tiene la misma forma que el selector
+// compartido de los juegos de dos a cuatro (loopSelectorJugadores), pero aca no
+// se elige una cantidad sino un juego, y ademas hace falta poder elegir UN
+// jugador, que aquel no contempla.
 static void loopElegir() {
-  if (joystickPaso(0)) {
-    jugadoresN = (jugadoresN == 1) ? 2 : 1;
+  int8_t paso = joystickPaso(0);
+  if (paso) {
+    int8_t v = (int8_t)variante + paso;
+    if (v < 0)              v = VAR_N - 1;    // da la vuelta en los dos sentidos
+    if (v >= (int8_t)VAR_N) v = 0;
+    variante = (uint8_t)v;
     beep(1200, 25);
   }
-  if (btnFlanco[0]) { arrancarPartida(); return; }
-
-  // La tira partida en tantas franjas como jugadores, cada una del color con el
-  // que va a jugar ese: se ve quien entra sin leer el LCD.
-  FastLED.clear();
-  for (uint8_t j = 0; j < jugadoresN; j++) {
-    int16_t ini = (int16_t)(((int32_t)LARGO_TIRA * j) / jugadoresN);
-    int16_t fin = (int16_t)(((int32_t)LARGO_TIRA * (j + 1)) / jugadoresN) - 1;
-    for (int16_t i = ini; i <= fin; i++) setLed(i, (j == 0) ? COL_JUGADOR : COL_JUG2);
+  if (btnFlanco[0]) {
+    if (variante == VAR_CANONICO) {
+      estadoTwang = TWANG_CANONICO;
+      nuevoTwang32();
+    } else {
+      jugadoresN = (variante == VAR_2JUG) ? 2 : 1;
+      arrancarPartida();
+    }
+    return;
   }
-  nscale8(leds, LARGO_TIRA, 60);
+
+  FastLED.clear();
+  if (variante == VAR_CANONICO) {
+    // La mazmorra apagada con la salida azul al fondo: la firma del canonico,
+    // donde la salida esta SIEMPRE abierta y matar es opcional.
+    for (int16_t i = 0; i < LARGO_TIRA; i++) setLed(i, CRGB(0, 22, 0));
+    setLed(LARGO_TIRA - 1, CRGB(0, 60, 255));
+  } else {
+    // La tira partida en tantas franjas como jugadores, cada una del color con
+    // el que va a jugar ese: se ve quien entra sin leer el LCD.
+    uint8_t n = (variante == VAR_2JUG) ? 2 : 1;
+    for (uint8_t j = 0; j < n; j++) {
+      int16_t ini = (int16_t)(((int32_t)LARGO_TIRA * j) / n);
+      int16_t fin = (int16_t)(((int32_t)LARGO_TIRA * (j + 1)) / n) - 1;
+      for (int16_t i = ini; i <= fin; i++) setLed(i, (j == 0) ? COL_JUGADOR : COL_JUG2);
+    }
+    nscale8(leds, LARGO_TIRA, 60);
+  }
   FastLED.show();
 }
 
@@ -451,6 +481,7 @@ void loopTwang() {
   uint32_t ahora = millis();
 
   if (estadoTwang == TWANG_ELIGIENDO) { loopElegir(); return; }
+  if (estadoTwang == TWANG_CANONICO)  { loopTwang32(); return; }
 
   if (estadoTwang == TWANG_FIN) {
     // Derrota: onda roja que se expande desde donde cayo el jugador, y al menu.
@@ -739,10 +770,12 @@ static String vidasDe(uint8_t j) { return enJuego(j) ? String(jugVidas[j]) : Str
 
 void lcdTwang() {
   if (estadoTwang == TWANG_ELIGIENDO) {
-    lcdLinea(0, "Twang");
-    lcdLinea(1, jugadoresN == 1 ? "< 1 jugador  >" : "< 2 jugadores >");
+    lcdLinea(0, variante == VAR_CANONICO ? "Twang canonico" : "Twang PixeLED");
+    lcdLinea(1, variante == VAR_1JUG ? "< 1 jugador  >" :
+                variante == VAR_2JUG ? "< 2 jugadores >" : "< Twang32 >");
     return;
   }
+  if (estadoTwang == TWANG_CANONICO) { lcdTwang32(); return; }
   if (estadoTwang == TWANG_FIN) {
     lcdLinea(0, "** GAME OVER **");
     if (esRecord) lcdLinea(1, "*NUEVO RECORD!*");
@@ -756,7 +789,8 @@ void lcdTwang() {
 }
 
 String webTwang() {
-  if (estadoTwang == TWANG_ELIGIENDO) return "Eligiendo jugadores";
+  if (estadoTwang == TWANG_ELIGIENDO) return "Eligiendo variante";
+  if (estadoTwang == TWANG_CANONICO)  return webTwang32();
   String s = "Nivel " + String(nivel);
   if (jugadoresN == 1) return s + ", vidas " + vidasDe(0);
   return s + ", P1 " + vidasDe(0) + " vidas, P2 " + vidasDe(1) + " vidas";
