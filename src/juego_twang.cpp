@@ -3,8 +3,12 @@
 // eje Y es una VELOCIDAD (mas inclinado, mas rapido), no un paso por pulsacion,
 // que es lo que le da el tacto del TWANG original. Por eso la posicion se
 // guarda en float y el LED que se pinta es esa posicion redondeada.
-// Los enemigos entran por el extremo lejano (el de la salida) y caminan hacia
-// el jugador a paso fijo, igual que avanza el muro de Rompecolores.
+// Todos los enemigos entran por el extremo lejano (el de la salida) y bajan a
+// paso fijo, pero solo los CAMINANTES bajan hasta el fondo: los CENTINELAS se
+// plantan en un punto y las PATRULLAS se quedan yendo y viniendo dentro de su
+// banda. Es el reparto del TWANG original (ahi el enemigo con "wobble" oscila
+// alrededor de donde nacio) y es lo que obliga a subir a buscarlos: si todos
+// bajaran, esperarlos abajo y matarlos de a uno seria siempre la mejor jugada.
 // La salida es el ultimo LED y solo parpadea cuando la tanda esta limpia: asi
 // se ve de un vistazo que primero hay que matar a todos y despues cruzar.
 
@@ -12,8 +16,8 @@
 
 // ---------- Parametros ----------
 uint16_t       TWANG_VEL_JUGADOR   = 45;   // LEDs por segundo con el joystick a fondo
-uint16_t       TWANG_ATAQUE_RADIO  = 6;    // LEDs a cada lado que alcanza el pulso ya expandido
-uint16_t       TWANG_ATAQUE_ESPERA = 380;  // cooldown entre ataques: agil, pero no spam infinito
+uint16_t       TWANG_ATAQUE_RADIO  = 5;    // LEDs a cada lado que alcanza el pulso ya expandido
+uint16_t       TWANG_ATAQUE_ESPERA = 200;  // cooldown entre ataques: agil, pero no spam infinito
 
 const uint16_t TWANG_VEL_LENTA    = 300;  // enemigos mas lentos, pote al minimo (ms por LED)
 const uint16_t TWANG_VEL_RAPIDA   = 120;  // enemigos mas rapidos, pote al maximo (ms por LED)
@@ -24,15 +28,28 @@ const uint8_t  TWANG_VIDAS        = 3;
 // quede el doble de vacia, cada nivel pone el doble de todo (y por eso su
 // record --el nivel alcanzado-- se guarda por largo de tira).
 //
-// Los tres MAX dimensionan los arrays para la tira larga; los topes reales de
-// cada tanda salen de las tope*(), que con la corta dan 12 / 4 / 3.
-const uint8_t  TWANG_MAX_ENEMIGOS = 24;   // tamano de los arrays paralelos
+// Los tres MAX dimensionan los arrays para la tira larga (el de enemigos con
+// lugar de sobra para el generador); los topes reales de cada tanda salen de
+// las tope*(), que con la corta dan 12 / 4 / 3.
+const uint8_t  TWANG_MAX_ENEMIGOS = 32;   // tamano de los arrays paralelos
 const uint8_t  TWANG_ENEMIGOS_N1  = 3;    // enemigos del nivel 1; sube de a uno por nivel
 const uint16_t TWANG_APARICION_MS = 900;  // separacion entre apariciones para que no salgan todos pegados
 const uint16_t TWANG_ATAQUE_MS    = 200;  // ventana en la que el pulso mata (y en la que se ve creciendo)
 const uint16_t TWANG_INVUL_MS     = 700;  // invulnerabilidad tras un golpe (evita perder varias vidas de un tiron)
 const uint16_t TWANG_SALIDA_MS    = 1200; // festejo al completar un nivel antes de la tanda siguiente
 const uint16_t TWANG_FIN_MS       = 3000; // duracion de la animacion de derrota antes de volver al menu
+
+// Generador: desde TWANG_GEN_NIVEL la salida suelta un caminante cada tanto
+// mientras quede tanda por limpiar. Es el equivalente de los spawn pools del
+// TWANG original, y es lo que hace que demorarse cueste caro.
+const uint8_t  TWANG_GEN_NIVEL    = 4;    // primer nivel con generador
+const uint16_t TWANG_GEN_MS       = 9000; // cada cuanto suelta uno en ese primer nivel
+const uint16_t TWANG_GEN_PASO     = 600;  // se acelera esto por cada nivel que pasa
+const uint16_t TWANG_GEN_MS_MIN   = 4000; // piso: por mas niveles que pasen no aprieta mas
+const int16_t  TWANG_GEN_ZONA_SEGURA = 5; // LEDs antes de la salida donde el generador no suelta nada
+const uint16_t TWANG_GEN_AVISO_1  = 500;  // dos destellos violetas en la puerta antes de soltar uno: el
+const uint16_t TWANG_GEN_AVISO_2  = 250;  // primero a 500 ms y el segundo a 250 ms, para poder reaccionar
+const uint16_t TWANG_GEN_AVISO_MS = 150;  // cuanto dura cada destello
 
 // Terreno del nivel: lava (tramos que se prenden y apagan) y cintas
 // transportadoras (tramos que empujan al que este parado encima).
@@ -46,6 +63,12 @@ const int16_t  TWANG_TERRENO_MARGEN = 12; // LEDs despejados en la base (donde s
 const uint16_t TWANG_LAVA_ON_MS   = 1400; // cuanto queda encendida (peligrosa)
 const uint16_t TWANG_LAVA_OFF_MS  = 1800; // apagada mas tiempo que encendida: siempre hay ventana para cruzar
 const uint16_t TWANG_LAVA_AVISO_MS= 500;  // parpadeo de aviso antes de encenderse: la muerte nunca es sorpresa
+const uint16_t TWANG_LAVA_CRECE_MS = 1500;// cada cuanto el tramo se estira un LED (alternando puntas). Lento a
+                                          // proposito: la lava no persigue a nadie, solo hace que el camino que
+                                          // memorizaste al entrar al nivel se vaya angostando si te quedas
+const int16_t  TWANG_LAVA_LARGO_MAX = 12; // por mas corredor que tenga no pasa de aca: un tramo mas largo que
+                                          // esto ya no se cruza en la ventana en que esta apagada
+const int16_t  TWANG_LAVA_SEPARACION = 2; // LEDs de piso firme que siempre quedan entre dos tramos de terreno
 const uint8_t  TWANG_CINTA_VEL    = 18;   // LEDs/s que suma la cinta; bastante menos que TWANG_VEL_JUGADOR
                                           // para poder caminar contra ella (mas lento) y no quedar atrapado
 
@@ -56,23 +79,40 @@ const uint8_t  TWANG_CINTA_VEL    = 18;   // LEDs/s que suma la cinta; bastante 
 static const CRGB COL_JUGADOR = CRGB(  0, 255,   0);
 static const CRGB COL_ENEMIGO = CRGB(255,   0,   0);
 static const CRGB COL_SALIDA  = CRGB(  0,  60, 255);
+static const CRGB COL_AVISO   = CRGB(160,   0, 255);   // violeta: la puerta esta por escupir un enemigo
 static const CRGB COL_LAVA    = CRGB(255,  60,   0);
 static const CRGB COL_CINTA   = CRGB(  0, 180, 160);
 
 // ---------- Estado ----------
 // Los enemigos van en arrays paralelos (misma idea simple que el muro de
-// Rompecolores): posicion, si sigue vivo, cuando dio su ultimo paso y a partir
-// de cuando entra a la mazmorra. Un enemigo "vivo" pero con aparicion futura
-// todavia no se dibuja ni se mueve, asi la tanda entra escalonada.
+// Rompecolores): tipo, posicion, si sigue vivo, cuando dio su ultimo paso y a
+// partir de cuando entra a la mazmorra. Un enemigo "vivo" pero con aparicion
+// futura todavia no se dibuja ni se mueve, asi la tanda entra escalonada.
+//
+// Los tres tipos dan el mismo paso (velEnemigo): lo unico que cambia es hasta
+// donde. El caminante baja hasta salirse por la base, el centinela baja hasta
+// su punto y se planta, y la patrulla baja hasta su banda y ahi rebota entre
+// los dos bordes. Se pueden pisar entre ellos sin problema: no hay colision
+// enemigo-enemigo, solo enemigo-jugador.
 enum EstadoTwang { TWANG_JUGANDO, TWANG_NIVEL, TWANG_FIN };
+enum TipoEnemigo { ENE_CAMINANTE, ENE_CENTINELA, ENE_PATRULLA };
 static EstadoTwang estadoTwang;
 static float    jugadorPos;                        // posicion continua: el movimiento es por velocidad, no por pasos
+static uint8_t  enemigoTipo[TWANG_MAX_ENEMIGOS];
 static int16_t  enemigoPos[TWANG_MAX_ENEMIGOS];
+static int16_t  enemigoIni[TWANG_MAX_ENEMIGOS];    // borde bajo de su banda (o el punto donde se planta)
+static int16_t  enemigoFin[TWANG_MAX_ENEMIGOS];    // borde alto de su banda: hasta ahi baja al entrar
+static int8_t   enemigoDir[TWANG_MAX_ENEMIGOS];    // -1 bajando, +1 subiendo, 0 plantado
+static bool     enemigoEnBanda[TWANG_MAX_ENEMIGOS];// ya llego a su zona y dejo de bajar
+static bool     enemigoCuenta[TWANG_MAX_ENEMIGOS]; // si hay que matarlo para abrir la salida
+static int8_t   enemigoLado[TWANG_MAX_ENEMIGOS];   // de que lado del jugador quedo en el frame anterior
 static bool     enemigoVivo[TWANG_MAX_ENEMIGOS];
 static uint32_t enemigoPaso[TWANG_MAX_ENEMIGOS];   // millis() del ultimo paso de cada enemigo
 static uint32_t enemigoAparece[TWANG_MAX_ENEMIGOS];// millis() en que ese enemigo entra a la mazmorra
 static uint16_t velEnemigo;                        // intervalo de avance de la tanda actual (ms por LED)
 static uint16_t velInicial;                        // lo fija el pote al arrancar la partida
+static uint32_t genProximo;                        // millis() del proximo del generador (0 = nivel sin generador)
+static uint16_t genCada;                           // cada cuanto suelta uno en este nivel
 
 // Terreno del nivel, tambien en arrays paralelos. Es fijo mientras dura el
 // nivel y se regenera entero en cada tanda nueva (ver generarTerreno).
@@ -80,6 +120,10 @@ static int16_t  lavaIni[TWANG_MAX_LAVA];           // tramo de lava [ini, fin], 
 static int16_t  lavaFin[TWANG_MAX_LAVA];
 static bool     lavaOn[TWANG_MAX_LAVA];            // encendida ahora (quema)
 static uint32_t lavaCambio[TWANG_MAX_LAVA];        // millis() del ultimo cambio on/off
+static int8_t   lavaPunta[TWANG_MAX_LAVA];         // por que punta le toca estirarse la proxima vez
+static int16_t  lavaMin[TWANG_MAX_LAVA];           // LED mas bajo y mas alto que puede llegar a ocupar: el
+static int16_t  lavaMax[TWANG_MAX_LAVA];           // corredor que le quedo libre entre sus dos vecinos
+static uint32_t lavaCrece[TWANG_MAX_LAVA];         // millis() del ultimo estiron
 static uint8_t  lavaN;                             // cuantos tramos de lava tiene el nivel actual
 static int16_t  cintaIni[TWANG_MAX_CINTAS];        // tramo de cinta [ini, fin], ambos incluidos
 static int16_t  cintaFin[TWANG_MAX_CINTAS];
@@ -112,9 +156,12 @@ static void sonarNivel()    { tocarJingle(JINGLE_NIVEL, 3); }
 static void sonarGameOver() { tocarJingle(JINGLE_FIN, 4); }
 
 // ---------- Helpers ----------
-static uint8_t enemigosVivos() {
+// Los que hay que limpiar para que se abra la salida. Los que suelta el
+// generador estan vivos y pegan igual, pero no cuentan: si contaran, con el
+// generador activo la salida no se abriria nunca.
+static uint8_t enemigosDeTanda() {
   uint8_t n = 0;
-  for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS; i++) if (enemigoVivo[i]) n++;
+  for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS; i++) if (enemigoVivo[i] && enemigoCuenta[i]) n++;
   return n;
 }
 
@@ -136,6 +183,14 @@ static void generarTerreno() {
   int16_t  limite = LARGO_TIRA - 1 - TWANG_TERRENO_MARGEN;     // antes de la salida
   uint8_t  lavas = 0, cintas = 0;
   bool     tocaLava = true;
+
+  // Los tramos en el orden en que quedaron sobre la tira. Lo unico que se hace
+  // con esto es, al final, calcular hasta donde puede correrse cada lava sin
+  // comerse al vecino (ver el flujo, mas abajo).
+  int16_t ordIni[TWANG_MAX_LAVA + TWANG_MAX_CINTAS];
+  int16_t ordFin[TWANG_MAX_LAVA + TWANG_MAX_CINTAS];
+  int8_t  ordLava[TWANG_MAX_LAVA + TWANG_MAX_CINTAS];        // indice de lava, o -1 si el tramo es cinta
+  uint8_t ordN = 0;
 
   while (lavas < lavaN || cintas < cintasN) {
     if ( tocaLava && lavas  >= lavaN)   tocaLava = false;    // ya no quedan de ese tipo
@@ -160,12 +215,38 @@ static void generarTerreno() {
       cintaDir[cintas] = (random(2) == 0) ? -1 : +1;
       cintas++;
     }
+    ordIni[ordN]  = cursor;
+    ordFin[ordN]  = cursor + largo - 1;
+    ordLava[ordN] = tocaLava ? (int8_t)(lavas - 1) : (int8_t)-1;
+    ordN++;
     cursor += largo;
     tocaLava = !tocaLava;
   }
 
   lavaN   = lavas;    // puede haber entrado menos de lo pedido si se acabo la tira
   cintasN = cintas;
+
+  // Corredor de cada lava: hasta donde puede estirarse. En las puntas de la tira
+  // el limite son los margenes; entre dos tramos el hueco se REPARTE, porque el
+  // vecino tambien puede estar creciendo (si cada uno se midiera contra donde
+  // nacio el otro, los dos se comerian el mismo hueco y terminarian fundidos).
+  // De lo que sobra despues de descontar los TWANG_LAVA_SEPARACION LEDs de piso
+  // firme se lleva la mitad cada uno, o todo el que crece si el vecino es cinta.
+  for (uint8_t k = 0; k < ordN; k++) {
+    int8_t l = ordLava[k];
+    if (l < 0) continue;
+    lavaMin[l]   = TWANG_TERRENO_MARGEN;    // los vecinos, si los hay, achican esto abajo
+    lavaMax[l]   = limite;
+    lavaPunta[l] = (random(2) == 0) ? -1 : +1;
+    lavaCrece[l] = ahora;
+  }
+  for (uint8_t k = 0; k + 1 < ordN; k++) {
+    int16_t libre = ordIni[k + 1] - ordFin[k] - 1 - TWANG_LAVA_SEPARACION;
+    if (libre < 0) libre = 0;
+    int16_t paraAbajo = (ordLava[k] < 0) ? 0 : ((ordLava[k + 1] < 0) ? libre : libre / 2);
+    if (ordLava[k]     >= 0) lavaMax[ordLava[k]]     = ordFin[k]     + paraAbajo;
+    if (ordLava[k + 1] >= 0) lavaMin[ordLava[k + 1]] = ordIni[k + 1] - (libre - paraAbajo);
+  }
 }
 
 // Arma la tanda del nivel actual: mas enemigos y mas rapidos a cada nivel, con
@@ -178,12 +259,68 @@ static void iniciarTanda() {
   if (nivel == 1) velEnemigo = velInicial;    // el pote fija el nivel 1
   else velEnemigo = max<int>(TWANG_VEL_MINIMA, (velEnemigo * 88) / 100);
 
+  // Reparto de tipos. El nivel 1 es la presentacion: uno de cada uno, para que
+  // se vea de entrada que no todos bajan. El 2 todavia es mitad caminantes, y
+  // del 3 en adelante la mayoria patrulla y solo un cuarto baja a buscarte.
+  uint8_t caminantes, centinelas;
+  if      (nivel == 1) { caminantes = n / 3;       centinelas = n / 3; }
+  else if (nivel == 2) { caminantes = (n + 1) / 2; centinelas = 1; }
+  else                 { caminantes = (n >= 4) ? n / 4 : 1; centinelas = (n >= 6) ? 2 : 1; }
+  if (caminantes + centinelas > n) centinelas = n - caminantes;   // red de seguridad si se tocan los topes
+  uint8_t estacionarios = n - caminantes;                         // centinelas + patrullas
+
+  // Bandas: la mazmorra util se parte en n tramos iguales y cada enemigo se
+  // queda con el suyo, asi la tanda se reparte por toda la tira en vez de venir
+  // en fila india. Los caminantes tambien ocupan banda aunque no la miren
+  // nunca, y eso corre a los estacionarios hacia arriba: el fondo, que es donde
+  // reaparecemos, queda para los que vienen bajando.
+  int16_t base  = TWANG_TERRENO_MARGEN;
+  int16_t tope  = LARGO_TIRA - 1 - TWANG_TERRENO_MARGEN;
+  int16_t ancho = (tope - base + 1) / n;
+  if (ancho < 1) ancho = 1;
+
   uint32_t ahora = millis();
+  uint8_t  puestos = 0;                       // centinelas ya colocados
   for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS; i++) {
     enemigoVivo[i]    = (i < n);
+    enemigoCuenta[i]  = true;                 // los de la tanda son los que abren la salida
     enemigoPos[i]     = LARGO_TIRA - 1 - (int16_t)random(0, 5);
+    enemigoDir[i]     = -1;                   // todos entran bajando desde la salida
+    enemigoLado[i]    = 0;                    // sin lado todavia: se fija en su primer frame
     enemigoAparece[i] = ahora + (uint32_t)i * TWANG_APARICION_MS;
     enemigoPaso[i]    = enemigoAparece[i];
+
+    int16_t bIni = base + (int16_t)i * ancho;
+    if (i < caminantes) {
+      enemigoTipo[i]    = ENE_CAMINANTE;
+      enemigoEnBanda[i] = true;               // no tiene zona: baja hasta salirse por la base
+      enemigoIni[i]     = 0;
+      enemigoFin[i]     = 0;
+    } else {
+      // Los centinelas se reparten entre las patrullas por proporcion, para que
+      // no queden los dos amontonados en las bandas de mas abajo.
+      uint8_t j = i - caminantes;
+      enemigoEnBanda[i] = false;
+      if ((uint16_t)puestos * estacionarios <= (uint16_t)j * centinelas) {
+        enemigoTipo[i] = ENE_CENTINELA;
+        enemigoIni[i]  = bIni + ancho / 2;    // se planta en el centro de su banda
+        enemigoFin[i]  = enemigoIni[i];
+        puestos++;
+      } else {
+        enemigoTipo[i] = ENE_PATRULLA;
+        enemigoIni[i]  = bIni;
+        enemigoFin[i]  = bIni + ancho - 1;
+      }
+    }
+  }
+
+  // Generador: aparece en TWANG_GEN_NIVEL y aprieta un poco mas cada nivel.
+  if (nivel >= TWANG_GEN_NIVEL) {
+    uint16_t resta = (uint16_t)(nivel - TWANG_GEN_NIVEL) * TWANG_GEN_PASO;
+    genCada    = (resta > TWANG_GEN_MS - TWANG_GEN_MS_MIN) ? TWANG_GEN_MS_MIN : TWANG_GEN_MS - resta;
+    genProximo = ahora + genCada;
+  } else {
+    genProximo = 0;
   }
 
   generarTerreno();             // lava y cintas nuevas en cada nivel
@@ -292,6 +429,22 @@ void loopTwang() {
       lavaCambio[i] += dur;
       lavaOn[i] = !lavaOn[i];
     }
+    // Crecimiento: el tramo se ESTIRA de a un LED, alternando puntas, hasta
+    // llegar a su largo maximo o a los bordes del corredor que le calculo
+    // generarTerreno. No se desplaza: una lava que se corriera entera por la
+    // tira se leeria como un bicho moviendose, no como lava.
+    if (ahora - lavaCrece[i] >= TWANG_LAVA_CRECE_MS) {
+      lavaCrece[i] += TWANG_LAVA_CRECE_MS;
+      if (lavaFin[i] - lavaIni[i] + 1 < TWANG_LAVA_LARGO_MAX) {
+        for (uint8_t intento = 0; intento < 2; intento++) {   // si la punta que toca ya no da, prueba la otra
+          bool crecio = false;
+          if (lavaPunta[i] < 0) { if (lavaIni[i] > lavaMin[i]) { lavaIni[i]--; crecio = true; } }
+          else                  { if (lavaFin[i] < lavaMax[i]) { lavaFin[i]++; crecio = true; } }
+          lavaPunta[i] = -lavaPunta[i];                       // la proxima le toca a la otra
+          if (crecio) break;
+        }
+      }
+    }
     if (lavaOn[i] && !invul && jugadorLed >= lavaIni[i] && jugadorLed <= lavaFin[i]) {
       if (recibirGolpe(jugadorLed)) return;
     }
@@ -307,36 +460,84 @@ void loopTwang() {
   if (atacando && tAtaque > TWANG_ATAQUE_MS) atacando = false;
   int16_t radio = atacando ? (1 + ((int16_t)TWANG_ATAQUE_RADIO * (int16_t)tAtaque) / TWANG_ATAQUE_MS) : 0;
 
-  // --- Enemigos: avanzan hacia la base y chocan (o mueren en el pulso) ---
+  // --- Generador: la salida va soltando caminantes hasta que llegues ---
+  // No cuentan para abrir la salida y no paran cuando la tanda queda limpia:
+  // lo unico que los frena es que te acerques a la meta. Asi la corrida final
+  // tambien se juega, en vez de ser un paseo por una mazmorra ya vacia.
+  if (genProximo && ahora >= genProximo) {
+    // Zona franca: con el jugador en los ultimos LEDs antes de la salida no
+    // sale nada. Un enemigo naciendo en la salida justo cuando estas por
+    // cruzarla te mata sin margen de reaccion, y eso no es jugable. Se
+    // reprograma igual, asi al bajar de la zona tenes el intervalo entero por
+    // delante en vez de un enemigo encima al primer paso.
+    if (jugadorLed < LARGO_TIRA - TWANG_GEN_ZONA_SEGURA) {
+      int8_t libre = -1;
+      for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS && libre < 0; i++) if (!enemigoVivo[i]) libre = (int8_t)i;
+      if (libre >= 0) {
+        enemigoVivo[libre]    = true;
+        enemigoTipo[libre]    = ENE_CAMINANTE;
+        enemigoCuenta[libre]  = false;
+        enemigoEnBanda[libre] = true;
+        enemigoPos[libre]     = LARGO_TIRA - 1;
+        enemigoDir[libre]     = -1;
+        enemigoLado[libre]    = 0;
+        enemigoAparece[libre] = ahora;
+        enemigoPaso[libre]    = ahora;
+      }
+    }
+    genProximo = ahora + genCada;
+  }
+
+  // --- Enemigos: cada tipo da su paso, y despues se mira el choque ---
   for (uint8_t i = 0; i < TWANG_MAX_ENEMIGOS; i++) {
     if (!enemigoVivo[i]) continue;
     if (ahora < enemigoAparece[i]) continue;      // todavia no entro a la mazmorra
 
     if (ahora - enemigoPaso[i] >= velEnemigo) {
       enemigoPaso[i] += velEnemigo;
-      enemigoPos[i]--;
-      if (enemigoPos[i] < 0) { enemigoVivo[i] = false; continue; }  // se escapo por la base
+      enemigoPos[i]  += enemigoDir[i];
+
+      if (enemigoTipo[i] == ENE_CAMINANTE) {
+        if (enemigoPos[i] < 0) { enemigoVivo[i] = false; continue; }   // se escapo por la base
+      } else if (!enemigoEnBanda[i]) {
+        // Sigue bajando a ocupar su zona: entro por la salida, como todos.
+        if (enemigoPos[i] <= enemigoFin[i]) {
+          enemigoPos[i]     = enemigoFin[i];
+          enemigoEnBanda[i] = true;
+          if (enemigoTipo[i] == ENE_CENTINELA) enemigoDir[i] = 0;      // llego a su punto y se planta
+        }
+      } else if (enemigoTipo[i] == ENE_PATRULLA) {
+        // Ya esta en su banda: rebota entre los bordes y no baja de enemigoIni.
+        if      (enemigoPos[i] <= enemigoIni[i]) { enemigoPos[i] = enemigoIni[i]; enemigoDir[i] = +1; }
+        else if (enemigoPos[i] >= enemigoFin[i]) { enemigoPos[i] = enemigoFin[i]; enemigoDir[i] = -1; }
+      }
     }
 
     int16_t d = enemigoPos[i] - jugadorLed;
-    if (d < 0) d = -d;
 
-    if (atacando && d <= radio) {                 // el pulso lo alcanzo
+    if (atacando && (d < 0 ? -d : d) <= radio) {  // el pulso lo alcanzo
       enemigoVivo[i] = false;
       sonarMuerte();
       continue;
     }
 
-    // Contacto: el enemigo llego (o paso) al jugador. Durante la invulnerabilidad
-    // lo atraviesa sin hacer dano, para no comerse varias vidas del mismo choque.
-    if (!invul && enemigoPos[i] <= jugadorLed) {
+    // Contacto: ahora que hay enemigos que se quedan arriba se puede chocar de
+    // los dos lados (subiendo contra uno, o dejando que uno te alcance por la
+    // espalda), asi que no se mira "esta debajo mio" sino el CRUCE: que haya
+    // cambiado de lado desde el frame anterior, o que caiga en el mismo LED.
+    // Durante la invulnerabilidad se atraviesan sin hacer dano, para no comerse
+    // varias vidas del mismo choque.
+    int8_t lado   = (d > 0) ? +1 : (d < 0 ? -1 : 0);
+    bool   choque = (lado == 0) || (enemigoLado[i] != 0 && lado != enemigoLado[i]);
+    enemigoLado[i] = lado;
+    if (choque && !invul) {
       enemigoVivo[i] = false;
       if (recibirGolpe(jugadorLed)) return;
     }
   }
 
   // --- Salida: cruzarla con la tanda limpia sube de nivel ---
-  bool limpio = (enemigosVivos() == 0);
+  bool limpio = (enemigosDeTanda() == 0);
   if (limpio && jugadorLed >= LARGO_TIRA - 1) {
     estadoTwang = TWANG_NIVEL;
     faseDesde   = ahora;
@@ -348,8 +549,17 @@ void loopTwang() {
   // (el jugador va ultimo para que se vea siempre, aunque este sobre la lava).
   FastLED.clear();
   // La salida parpadea SOLO con la tanda limpia; con enemigos vivos queda fija.
+  // Y antes de cada enemigo del generador da dos destellos violetas: la puerta
+  // es la boca por la que entran, asi que avisa ella. Solo los del generador,
+  // que salen de a uno y con tiempo de sobra; los de la tanda nacen todos
+  // juntos al arrancar el nivel y esto seria un parpadeo ilegible.
+  uint32_t falta  = (genProximo > ahora) ? genProximo - ahora : 0;
+  bool     avisar = falta && jugadorLed < LARGO_TIRA - TWANG_GEN_ZONA_SEGURA &&
+                    ((falta <= TWANG_GEN_AVISO_1 && falta > TWANG_GEN_AVISO_1 - TWANG_GEN_AVISO_MS) ||
+                     (falta <= TWANG_GEN_AVISO_2 && falta > TWANG_GEN_AVISO_2 - TWANG_GEN_AVISO_MS));
   bool salidaOn = limpio ? ((ahora / 200) % 2 == 0) : true;
-  setLed(LARGO_TIRA - 1, salidaOn ? COL_SALIDA : CRGB(0, 10, 40));
+  if (avisar) setLed(LARGO_TIRA - 1, COL_AVISO);
+  else        setLed(LARGO_TIRA - 1, salidaOn ? COL_SALIDA : CRGB(0, 10, 40));
 
   // Lava: apagada se dibuja muy tenue (hay que ver donde esta para planear el
   // cruce) y en los ultimos TWANG_LAVA_AVISO_MS antes de prenderse parpadea
@@ -401,7 +611,7 @@ void lcdTwang() {
     return;
   }
   lcdLinea(0, "Nivel " + String(nivel) + "  Vidas " + String(vidas));
-  uint8_t vivos = enemigosVivos();
+  uint8_t vivos = enemigosDeTanda();
   lcdLinea(1, vivos ? ("Enemigos: " + String(vivos)) : "Salida abierta!");
 }
 
